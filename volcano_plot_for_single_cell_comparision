@@ -1,0 +1,63 @@
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+
+# —— Set colors: red for upregulated, blue for downregulated, grey for not significant ——
+volcano_colors <- c(
+  "Up in PNC" = "#D73027",
+  "Down in PNC" = "#4575B4",
+  "Not Sig" = "grey80"
+)
+
+# —— Construct Volcano Plot ——
+ggplot(de_genes, aes(x = avg_log2FC, y = -log10(p_val_adj))) +
+  
+  # All gene points
+  geom_point(aes(color = sig), size = 1.2, alpha = 0.7) +
+  
+  # Highlight target genes (light grey with black border for clear visibility)
+  geom_point(
+    data = subset(de_genes, gene %in% highlight_genes),
+    shape = 21, size = 2.2, stroke = 1.0,
+    fill = "grey95", color = "black"
+  ) +
+  
+  # Add labels for highlighted genes
+  geom_text_repel(
+    data = subset(de_genes, gene %in% highlight_genes),
+    aes(label = gene),
+    size = 4, fontface = "bold", color = "black",
+    max.overlaps = 30,
+    box.padding = 0.6,
+    segment.color = "grey30", segment.size = 0.3
+  ) +
+  
+  # Set custom color scheme
+  scale_color_manual(values = volcano_colors) +
+  
+  # Add threshold lines (horizontal: adj.p < 0.05; vertical: logFC ±0.25)
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey50", linewidth = 0.4) +
+  geom_vline(xintercept = c(-0.25, 0.25), linetype = "dotted", color = "grey50", linewidth = 0.4) +
+  
+  # Title and axis labels
+  labs(
+    title = "Differential Gene Expression between PNC and CAAX Cells at 24 Hours",
+    x = "Log2 Fold Change (PNC vs CAAX)",
+    y = expression(-log[10]~"Adjusted P-value"),
+    color = "Expression"
+  ) +
+  
+  # Theme adjustments
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 0.8),
+    axis.line = element_blank(),
+    axis.ticks = element_line(color = "black"),
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(face = "bold"),
+    legend.position = "right",
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size = 12)
+  )
