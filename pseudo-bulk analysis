@@ -1,0 +1,123 @@
+## 24H pseudo-bulk with superficial_H/C removed
+
+library(Seurat)
+library(edgeR)
+library(pheatmap)
+library(RColorBrewer)
+library(dplyr)
+
+# 0. Define the 'not in' operator
+`%ni%` <- Negate(`%in%`)
+
+# 1. Remove superficial_H and superficial_C
+krt_subset_clean <- subset(
+  krt_subset,
+  subset = celltype_krt %ni% c("superficial_H", "superficial_C")
+)
+
+# 2. Update metadata
+meta <- krt_subset_clean@meta.data
+sample_map <- c(H24a = "HRAS1", H24b = "HRAS2", C24a = "CAAX1", C24b = "CAAX2")
+meta$new_sample <- sample_map[meta$sample]
+meta$sample_cluster <- paste0(meta$new_sample, ".", meta$celltype_krt)
+krt_subset_clean@meta.data <- meta
+
+# Check sample numbers (to confirm superficial cells are removed)
+print(table(meta$new_sample))
+
+# 3. Extract counts matrix
+counts <- GetAssayData(krt_subset_clean, slot = "counts")
+
+# 4. Construct pseudo-bulk counts by sample
+samples <- unique(meta$new_sample)  # HRAS1 HRAS2 CAAX1 CAAX2
+pseudo_counts_samples <- sapply(samples, function(s) {
+  cells <- which(meta$new_sample == s)
+  Matrix::rowSums(counts[, cells, drop = FALSE])
+})
+
+dim(pseudo_counts_samples)
+print(colnames(pseudo_counts_samples))
+
+# 5. Create edgeR object and calculate differential expression
+group <- factor(c("HRAS", "HRAS", "CAAX", "CAAX")) 
+dge <- DGEList(counts = pseudo_counts_samples, group = group)
+dge <- calcNormFactors(dge)
+
+design <- model.matrix(~0 + group)
+colnames(design) <- levels(group)
+dge <- estimateDisp(dge, design)
+fit <- glmQLFit(dge, design)
+qlf <- glmQLFTest(fit, contrast = c(1, -1)) 
+
+topTags(qlf)
+
+# 6. Gene sets: MOMP and cGAS–STING
+momp_genes <- c(
+  "baxa", "baxb", "bak1", "bcl2a", "bcl2b", "bcl2l1", "mcl1a", "mcl1b",
+  "bida", "bidb", "bcl2l11", "bik", "bmf", "bbc3", "pmaip1", "hrk", "badb",
+  "cycs", "cycsb"
+)
+cgas_sting_genes <- c(
+  "cgas", "sting1", "tbk1", "nfkb1", "nfkb2",
+  "ifnphi1", "ifnphi2", "ifnphi3",
+  "isg15"
+)
+
+# 7. Identify expressed genes in dataset
+genes_to_plot <- intersect(
+  c(momp_genes, cgas_sting_genes),
+  rownames(pseudo_counts_samples)
+)
+
+# Order: MOMP genes first, cGAS–STING genes after
+genes_to_plot <- c(
+  intersect(momp_genes, genes_to_plot),
+  intersect(cgas_sting_genes, genes_to_plot)
+)
+
+# 8. Extract submatrix and perform z-score normalization by row
+mat <- pseudo_counts_samples[genes_to_plot, c("CAAX1", "CAAX2", "HRAS1", "HRAS2"), drop = FALSE]
+mat_z <- t(scale(t(mat)))
+
+# 9. Row group information
+row_split <- c(
+  rep("MOMP", length(intersect(momp_genes, genes_to_plot))),
+  rep("cGAS_STING", length(intersect(cgas_sting_genes, genes_to_plot)))
+)
+
+# 10. Prepare column annotation and custom colors
+annotation_col <- data.frame(
+  Genotype = factor(c("CAAX", "CAAX", "HRAS", "HRAS"),
+                    levels = c("CAAX", "HRAS"))
+)
+rownames(annotation_col) <- c("CAAX1", "CAAX2", "HRAS1", "HRAS2")
+
+anno_colors <- list(
+  Genotype = c(
+    CAAX = "#5DADE2",   # Blue
+    HRAS = "#EC7063"    # Red
+  )
+)
+
+heat_colors <- colorRampPalette(c("#2166ac", "#f7f7f7", "#b2182b"))(100)
+
+# 11. Draw heatmap
+pheatmap(
+  mat_z,
+  cluster_rows     = FALSE,
+  cluster_cols     = FALSE,
+  show_rownames    = TRUE,
+  show_colnames    = TRUE,
+  annotation_col   = annotation_col,
+  annotation_colors= anno_colors,
+  row_split        = row_split,
+  gaps_row         = length(intersect(momp_genes, genes_to_plot)),
+  color            = heat_colors,
+  scale            = "none",
+  fontsize_row     = 10,
+  fontsize_col     = 12,
+  cellheight       = 10,
+  cellwidth        = 25,
+  border_color     = NA,
+  main             = ""
+)
