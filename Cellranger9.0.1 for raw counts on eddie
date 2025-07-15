@@ -1,0 +1,111 @@
+#!/bin/bash
+#$ -q eddie
+#$ -N count_H24a
+#$ -cwd
+#$ -l h_vmem=64G
+#$ -pe sharedmem 4
+#$ -l h_rt=96:00:00
+#$ -o count_H24a.out
+#$ -e count_H24a.err
+
+export PATH=/exports/eddie/scratch/s2700724/cellranger-9.0.1:$PATH
+
+ulimit -s unlimited
+
+cd /exports/eddie/scratch/s2700724
+
+echo "=== H24a STARTED at $(date) ==="
+
+cellranger count \
+  --id=H24a_count \
+  --transcriptome=/exports/eddie/scratch/s2700724/mkref_danio_rerio \
+  --fastqs=/exports/eddie/scratch/s2700724/fastq/H24a \
+  --localmem=60 \
+  --localcores=4 \
+  --create-bam true
+
+echo "=== H24a FINISHED at $(date) ==="
+
+#!/bin/bash
+#$ -q eddie
+#$ -N count_H24b
+#$ -cwd
+#$ -l h_vmem=64G
+#$ -pe sharedmem 4
+#$ -l h_rt=96:00:00
+#$ -o count_H24b.out
+#$ -e count_H24b.err
+
+export PATH=/exports/eddie/scratch/s2700724/cellranger-9.0.1:$PATH
+
+ulimit -s unlimited
+
+cd /exports/eddie/scratch/s2700724
+
+echo "=== H24b STARTED at $(date) ==="
+
+cellranger count \
+  --id=H24b_count \
+  --transcriptome=/exports/eddie/scratch/s2700724/mkref_danio_rerio \
+  --fastqs=/exports/eddie/scratch/s2700724/fastq/H24b \
+  --localmem=60 \
+  --localcores=4 \
+  --create-bam true
+
+echo "=== H24b FINISHED at $(date) ==="
+
+#!/bin/bash
+#$ -q eddie
+#$ -N count_C24a
+#$ -cwd
+#$ -l h_vmem=64G
+#$ -pe sharedmem 4
+#$ -l h_rt=96:00:00
+#$ -o count_C24a.out
+#$ -e count_C24a.err
+
+export PATH=/exports/eddie/scratch/s2700724/cellranger-9.0.1:$PATH
+
+ulimit -s unlimited
+
+cd /exports/eddie/scratch/s2700724
+
+echo "=== C24a STARTED at $(date) ==="
+
+cellranger count \
+  --id=C24a_count \
+  --transcriptome=/exports/eddie/scratch/s2700724/mkref_danio_rerio \
+  --fastqs=/exports/eddie/scratch/s2700724/fastq/C24a \
+  --localmem=60 \
+  --localcores=4 \
+  --create-bam true
+
+echo "=== C24a FINISHED at $(date) ==="
+
+#!/bin/bash
+#$ -q eddie
+#$ -N count_C24b
+#$ -cwd
+#$ -l h_vmem=64G
+#$ -pe sharedmem 4
+#$ -l h_rt=96:00:00
+#$ -o count_C24b.out
+#$ -e count_C24b.err
+
+export PATH=/exports/eddie/scratch/s2700724/cellranger-9.0.1:$PATH
+
+ulimit -s unlimited
+
+cd /exports/eddie/scratch/s2700724
+
+echo "=== C24b STARTED at $(date) ==="
+
+cellranger count \
+  --id=C24b_count \
+  --transcriptome=/exports/eddie/scratch/s2700724/mkref_danio_rerio \
+  --fastqs=/exports/eddie/scratch/s2700724/fastq/C24b \
+  --localmem=60 \
+  --localcores=4 \
+  --create-bam true
+
+echo "=== C24b FINISHED at $(date) ==="
