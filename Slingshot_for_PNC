@@ -1,0 +1,168 @@
+#slingshot for PNC
+
+
+
+
+
+
+###slingshot for the CAAX and HRAS seperately(they will influence the trajectory)
+
+krt_subset_caax <- subset(krt_subset, subset = genotype == "CAAX")
+krt_subset_hras <- subset(krt_subset, subset = genotype == "HRAS")
+
+get_sce <- function(seurat_obj, layers_to_use) {
+  rna_assay <- seurat_obj[["RNA"]]
+  counts_list <- lapply(layers_to_use, function(lay) {
+    GetAssayData(rna_assay, layer = lay)
+  })
+  counts_matrix <- do.call(cbind, counts_list)
+  cell_metadata <- seurat_obj@meta.data
+  umap_coords <- Embeddings(seurat_obj, "umap")
+  SingleCellExperiment(
+    assays = list(counts = counts_matrix),
+    colData = cell_metadata,
+    reducedDims = SimpleList(UMAP = umap_coords)
+  )
+}
+
+sce_caax <- get_sce(
+  krt_subset_caax,
+  layers_to_use = c("data.SoupCleaned_C24a", "data.SoupCleaned_C24b")
+)
+sce_hras <- get_sce(
+  krt_subset_hras,
+  layers_to_use = c("data.SoupCleaned_H24a", "data.SoupCleaned_H24b")
+)
+sce_caax$cluster <- sce_caax$celltype_krt
+sce_hras$cluster <- sce_hras$celltype_krt
+
+
+
+
+
+
+
+###sometimes the We can see the cells from sample CAAX in the PNC cluster(but the number is really low, just deleting them)
+###the threshold is 16
+sce_caax <- sce_caax[, !is.na(sce_caax$cluster)]
+cluster_counts <- table(sce_caax$cluster)
+keep_clusters <- names(cluster_counts)[cluster_counts >= 16]
+sce_caax <- sce_caax[, sce_caax$cluster %in% keep_clusters]
+sce_caax$cluster <- factor(sce_caax$cluster)
+sce_caax$cluster <- droplevels(sce_caax$cluster)
+
+sce_hras <- sce_hras[, !is.na(sce_hras$cluster)]
+sce_hras <- sce_hras[, sce_hras$cluster %in% c("PNC1", "PNC2", "PNC3", "PNC4", "Superficial_H")]
+sce_hras$cluster <- factor(sce_hras$cluster)
+
+
+sce_caax <- slingshot(
+  sce_caax,
+  clusterLabels = 'cluster',
+  reducedDim = 'UMAP',
+  start.clus = 'CAAX1'  # 根据需要指定起点
+)
+
+sce_hras <- slingshot(
+  sce_hras,
+  clusterLabels = 'cluster',
+  reducedDim = 'UMAP',
+  start.clus = 'PNC1'  # 根据需要指定起点
+)
+
+umap_caax <- as.data.frame(reducedDim(sce_caax, "UMAP"))
+umap_caax$celltype <- sce_caax$cluster
+
+umap_hras <- as.data.frame(reducedDim(sce_hras, "UMAP"))
+umap_hras$celltype <- sce_hras$cluster
+
+curves_caax <- slingCurves(sce_caax)
+curves_hras <- slingCurves(sce_hras)
+
+all_celltypes <- sort(unique(c(as.character(umap_caax$celltype), as.character(umap_hras$celltype))))
+celltype_colors <- setNames(
+  brewer.pal(length(all_celltypes), "Set3"),
+  all_celltypes
+)
+
+line_colors <- c("CAAX" = "#1f77b4", "HRAS" = "#d62") 
+umap_all <- rbind(umap_caax, umap_hras)
+
+
+###background
+plot(
+  umap_all$umap_1, umap_all$umap_2,  
+  col = celltype_colors[umap_all$celltype],
+  pch = 16, cex = 0.6, asp = 1,
+  xlab = "UMAP 1", ylab = "UMAP 2",
+  main = "Separate Slingshot Trajectories (Colored by Cluster)"
+)
+
+
+###CAAX
+for (i in seq_along(curves_caax)) {
+  curve <- curves_caax[[i]]
+  lines(curve$s, col = line_colors["CAAX"], lwd = 2.5)
+  
+  n <- nrow(curve$s)
+  for (j in seq(1, n-1, length.out = 12)) {
+    arrows(
+      x0 = curve$s[j,1], y0 = curve$s[j,2],
+      x1 = curve$s[j+1,1], y1 = curve$s[j+1,2],
+      length = 0.08, angle = 25, lwd = 1.2, col = line_colors["CAAX"]
+    )
+  }
+}
+
+###HRAS
+for (i in seq_along(curves_hras)) {
+  curve <- curves_hras[[i]]
+  lines(curve$s, col = line_colors["HRAS"], lwd = 2.5)
+  
+  n <- nrow(curve$s)
+  for (j in seq(1, n-1, length.out = 12)) {
+    arrows(
+      x0 = curve$s[j,1], y0 = curve$s[j,2],
+      x1 = curve$s[j+1,1], y1 = curve$s[j+1,2],
+      length = 0.08, angle = 25, lwd = 1.2, col = line_colors["HRAS"]
+    )
+  }
+}
+
+###legand
+legend(
+  "topright", legend = names(celltype_colors),
+  col = celltype_colors, pch = 16,
+  cex = 0.7, bty = "n", title = "Cluster Type"
+)
+
+label_positions <- umap_all %>%
+  group_by(celltype) %>%
+  summarize(
+    umap_1 = median(umap_1, na.rm = TRUE),
+    umap_2 = median(umap_2, na.rm = TRUE)
+  )
+
+text(
+  label_positions$umap_1,
+  label_positions$umap_2,
+  labels = label_positions$celltype,
+  col = "black", 
+  cex = 0.8,
+  font = 2
+)
+
+###pseudotime
+pseudotime_df <- data.frame(
+  pseudotime = slingPseudotime(sce_hras)[,1], 
+  cluster = sce_hras$cluster
+)
+
+pseudotime_df_subset <- pseudotime_df %>% filter(cluster %in% c("PNC1", "PNC2", "PNC3","PNC4","Superficial_H"))
+
+ggplot(pseudotime_df_subset, aes(x = cluster, y = pseudotime, fill = cluster)) +
+  geom_violin() +
+  geom_boxplot(width = 0.1, outlier.shape = NA) +
+  theme_minimal() +
+  ggtitle("Pseudotime distribution")
+
