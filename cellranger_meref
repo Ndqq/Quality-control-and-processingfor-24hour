@@ -1,0 +1,28 @@
+#!/bin/bash
+#$ -N Cellranger_mkref           
+#$ -cwd                           
+#$ -pe sharedmem 4               
+#$ -l h_rt=24:00:00              
+#$ -l h_vmem=8G                   
+#$ -o mkref.out                   
+#$ -e mkref.err                   
+#$ -m ae                         
+#$ -M your_email@ed.ac.uk         
+
+
+. /etc/profile.d/modules.sh
+
+
+module load igmm/apps/cellranger/9.0.1
+
+
+FASTA_PATH=/exports/eddie/scratch/s2700724/SRR24658739/Danio_rerio.GRCz11.dna.primary_assembly.fa
+GTF_PATH=/exports/eddie/scratch/s2700724/SRR24658739/Danio_rerio.GRCz11.101.gtf
+
+
+cellranger mkref \
+  --genome=zf_grcz11_101 \
+  --fasta=$FASTA_PATH \
+  --genes=$GTF_PATH \
+  --nthreads=4 \
+  --localmem=32
