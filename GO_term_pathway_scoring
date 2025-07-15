@@ -1,0 +1,263 @@
+# ===== Load Required Packages =====
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(patchwork)
+library(msigdbr)
+
+# ===== Step 0: Extract GO-based Gene Sets from MSigDB (Danio rerio) =====
+go_terms <- c(
+  "GOBP_MITOCHONDRIAL_OUTER_MEMBRANE_PERMEABILIZATION",
+  "GOBP_RELEASE_OF_CYTOCHROME_C_FROM_MITOCHONDRIA",
+  "GOBP_CGAS_STING_SIGNALING_PATHWAY"
+)
+
+# Load GO:BP gene sets for zebrafish
+msig_zf <- msigdbr(species = "Danio rerio", category = "C5", subcategory = "GO:BP")
+
+# Extract gene symbols for the 3 GO terms
+go_genes <- msig_zf %>%
+  filter(gs_name %in% go_terms) %>%
+  select(gs_name, gene_symbol) %>%
+  arrange(gs_name)
+
+# Print gene list for each GO term
+for (term in go_terms) {
+  cat("\n======", term, "======\n")
+  genes <- go_genes %>%
+    filter(gs_name == term) %>%
+    pull(gene_symbol) %>%
+    unique()
+  cat(paste(genes, collapse = ", "), "\n")
+}
+
+# Optional: Create specific gene sets for module scoring
+geneset_momp <- go_genes %>%
+  filter(gs_name == "GOBP_MITOCHONDRIAL_OUTER_MEMBRANE_PERMEABILIZATION") %>%
+  pull(gene_symbol) %>%
+  unique()
+
+geneset_cytoc <- go_genes %>%
+  filter(gs_name == "GOBP_RELEASE_OF_CYTOCHROME_C_FROM_MITOCHONDRIA") %>%
+  pull(gene_symbol) %>%
+  unique()
+
+geneset_cgas <- go_genes %>%
+  filter(gs_name == "GOBP_CGAS_STING_SIGNALING_PATHWAY") %>%
+  pull(gene_symbol) %>%
+  unique()
+
+
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+
+# Step 1: Define two gene sets - MOMP and Cytochrome C (without inhibitory genes)
+geneset_momp <- c("acaa2", "atp5if1b", "bida", "bloc1s2", "bnip3", "bnip3la", "bnip3lb", "boka", "chchd10", "eya2", 
+                  "fzd9a", "gclc", "gsk3ab", "gsk3ba", "hip1rb", "hsp70l", "zgc:158343", "mpv17l", "mul1b", "rhot1a", 
+                  "rhot2", "slc25a4", "slc25a5", "slc35f6", "tmem102", "tmem14a", "vdac2")
+
+geneset_cytoc <- c("akt1", "avp", "badb", "baxa", "bcl2l10", "bcl2l11", "bmf2", "clu", "dnm1l", "fam162a", "fis1",
+                   "fxn", "ggctb", "ghitm", "gper1", "gpx1a", "hgfa", "igf1", "lmna", "mcl1a", "mffa", "mllt11",
+                   "mmp9", "opa1", "parlb", "pdcd5", "pink1", "plscr3b", "ppifb", "prelid1a", "prkn", "psmd10", 
+                   "pycard", "ywhaqa", "ywhaqb", "timm50", "tnfsf10", "tp53", "triap1")
+
+# Step 2: Merge and deduplicate
+combined_geneset <- unique(c(geneset_momp, geneset_cytoc))
+
+# Step 3: Filter expressed genes
+expr_mat <- GetAssayData(krt_subset, assay = "SCT", slot = "data")
+genes_in_data <- intersect(rownames(expr_mat), combined_geneset)
+cat("✅ Number of genes used for scoring:", length(genes_in_data), "\n")
+
+# Step 4: Add module score
+krt_subset <- AddModuleScore(krt_subset, features = list(genes_in_data), name = "MOMP_CytoC_Score")
+
+# Step 5: Prepare data
+df <- FetchData(krt_subset, vars = c("MOMP_CytoC_Score1", "celltype_krt")) %>%
+  rename(Score = MOMP_CytoC_Score1, Identity = celltype_krt) %>%
+  mutate(Group = case_when(
+    grepl("^CAAX", Identity, ignore.case = TRUE) ~ "CAAX",
+    grepl("^PNC", Identity, ignore.case = TRUE) ~ Identity,
+    TRUE ~ NA_character_
+  )) %>%
+  filter(Group %in% c("CAAX", "PNC1", "PNC2", "PNC3", "PNC4"))
+
+# Step 6: Set group order and color
+df$Group <- factor(df$Group, levels = c("CAAX", "PNC1", "PNC2", "PNC3", "PNC4"))
+group_colors <- c(
+  "CAAX" = "#7F9E89",
+  "PNC1" = "#4575B4",
+  "PNC2" = "#91BFDB",
+  "PNC3" = "#E0F3F8",
+  "PNC4" = "#D73027"
+)
+
+# Step 7: Set comparison groups and y-axis position
+y_max <- max(df$Score, na.rm = TRUE)
+compare_list <- list(
+  c("CAAX", "PNC1"),
+  c("CAAX", "PNC2"),
+  c("CAAX", "PNC3"),
+  c("CAAX", "PNC4")
+)
+label_y_vals <- seq(y_max + 0.03, y_max + 0.15, length.out = length(compare_list))
+
+# Step 8: Plot
+p <- ggplot(df, aes(x = Group, y = Score, fill = Group)) +
+  geom_violin(trim = FALSE, scale = "width", alpha = 0.7, color = NA) +
+  geom_boxplot(width = 0.2, fill = "white", outlier.size = 0.5, color = "black") +
+  stat_compare_means(
+    comparisons = compare_list,
+    method = "wilcox.test",
+    label = "p.signif",
+    label.y = label_y_vals,
+    tip.length = 0.02,
+    size = 5,
+    bracket.size = 0.7
+  ) +
+  scale_fill_manual(values = group_colors) +
+  theme_minimal(base_size = 16) +
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x = element_text(face = "bold", size = 14, angle = 45, hjust = 1),
+    axis.title.y = element_text(face = "bold", size = 14),
+    legend.position = "none",
+    panel.grid = element_blank()
+  ) +
+  labs(y = "Module Score", title = "MOMP Module Score: PNC1–4 vs CAAX") +
+  coord_cartesian(clip = "off")
+
+# Step 9: Save plot
+print(p)
+setwd("D:/project2_cGAS-STING/scRNA_seq/Dissertation")
+ggsave("MOMP_Module_Scores_PNC_vs_CAAX.png", plot = p, width = 10, height = 6, dpi = 600, units = "in", bg = "white")
+
+
+# 1. Manually define positive regulators of the cGAS–STING pathway (GO BP only)
+geneset_cgassting <- c(
+  "akt1", "aurkb", "banf1", "cgasa", "irf3", "irgf3", "si:ch73-171o20.1", 
+  "lyplal1", "parp1", "pcbp2", "ppp6c", "prkdc", "slc19a1", 
+  "sting1", "tab1", "tbk1", "zdhhc18a", "zdhhc9"
+)
+
+# 2. Extract expression data
+expr_mat <- GetAssayData(krt_subset, assay = "SCT", slot = "data")
+genes_in_data <- intersect(rownames(expr_mat), geneset_cgassting)
+cat("✅ Number of genes used for scoring:", length(genes_in_data), "\n")
+
+# 3. Add module score
+krt_subset <- AddModuleScore(krt_subset, features = list(genes_in_data), name = "CGAS_STING_Score")
+
+# 4. Prepare dataframe
+df <- FetchData(krt_subset, vars = c("CGAS_STING_Score1", "celltype_krt")) %>%
+  rename(Score = CGAS_STING_Score1, Identity = celltype_krt) %>%
+  mutate(Group = case_when(
+    grepl("^CAAX", Identity, ignore.case = TRUE) ~ "CAAX",
+    grepl("^PNC", Identity, ignore.case = TRUE) ~ Identity,
+    TRUE ~ NA_character_
+  )) %>%
+  filter(Group %in% c("CAAX", "PNC1", "PNC2", "PNC3", "PNC4"))
+
+# 5. Set order and colors
+df$Group <- factor(df$Group, levels = c("CAAX", "PNC1", "PNC2", "PNC3", "PNC4"))
+group_colors <- c(
+  "CAAX" = "#7F9E89",
+  "PNC1" = "#4575B4",
+  "PNC2" = "#91BFDB",
+  "PNC3" = "#E0F3F8",
+  "PNC4" = "#D73027"
+)
+
+# 6. Set comparison pairs and y-axis
+y_max <- max(df$Score, na.rm = TRUE)
+compare_list <- list(
+  c("CAAX", "PNC1"),
+  c("CAAX", "PNC2"),
+  c("CAAX", "PNC3"),
+  c("CAAX", "PNC4")
+)
+label_y_vals <- seq(y_max + 0.03, y_max + 0.15, length.out = length(compare_list))
+
+# 7. Plot
+p <- ggplot(df, aes(x = Group, y = Score, fill = Group)) +
+  geom_violin(trim = FALSE, scale = "width", alpha = 0.7, color = NA) +
+  geom_boxplot(width = 0.2, fill = "white", outlier.size = 0.5, color = "black") +
+  stat_compare_means(
+    comparisons = compare_list,
+    method = "wilcox.test",
+    label = "p.signif",
+    label.y = label_y_vals,
+    tip.length = 0.02,
+    size = 5,
+    bracket.size = 0.7
+  ) +
+  scale_fill_manual(values = group_colors) +
+  theme_minimal(base_size = 16) +
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x = element_text(face = "bold", size = 14, angle = 45, hjust = 1),
+    axis.title.y = element_text(face = "bold", size = 14),
+    legend.position = "none",
+    panel.grid = element_blank()
+  ) +
+  labs(y = "Module Score", title = "cGAS-STING Module Score: PNC1–4 vs CAAX") +
+  coord_cartesian(clip = "off")
+
+# 8. Save plot
+print(p)
+ggsave("CGAS_Module_Scores_PNC_vs_CAAX.png", plot = p, width = 10, height = 6, dpi = 600, units = "in", bg = "white")
+
+
+          library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(patchwork)
+
+# === 1. Manually define the gene sets (positive regulators only) ===
+geneset_momp_cytoc <- unique(c(
+  # MOMP
+  "acaa2", ..., "vdac2",
+  # Cytochrome C release
+  "akt1", ..., "triap1"
+))
+
+geneset_cgas <- c("akt1", ..., "zdhhc9")
+
+# === 2. Match expressed genes ===
+expr_mat <- GetAssayData(krt_subset, assay = "SCT", slot = "data")
+genes_momp_cytoc_in_data <- intersect(rownames(expr_mat), geneset_momp_cytoc)
+genes_cgas_in_data <- intersect(rownames(expr_mat), geneset_cgas)
+
+# === 3. Module scoring ===
+krt_subset <- AddModuleScore(krt_subset, features = list(genes_momp_cytoc_in_data), name = "MOMP_CYTOC_Score")
+krt_subset <- AddModuleScore(krt_subset, features = list(genes_cgas_in_data), name = "CGAS_STING_Score")
+
+# === 4. Extract PNC and CAAX ===
+df <- FetchData(krt_subset, vars = c("MOMP_CYTOC_Score1", "CGAS_STING_Score1", "celltype_krt")) %>%
+  rename(MOMP_CYTOC = MOMP_CYTOC_Score1, CGAS_STING = CGAS_STING_Score1, Identity = celltype_krt) %>%
+  mutate(Group = case_when(
+    grepl("^CAAX", Identity, ignore.case = TRUE) ~ "CAAX",
+    grepl("^PNC", Identity, ignore.case = TRUE) ~ "PNC",
+    TRUE ~ NA_character_
+  )) %>%
+  filter(Group %in% c("CAAX", "PNC"))
+
+df$Group <- factor(df$Group, levels = c("CAAX", "PNC"))
+
+# === 5. Plot MOMP + Cytochrome C ===
+p1 <- ggplot(df, aes(x = Group, y = MOMP_CYTOC, fill = Group)) +
+  ... +
+  labs(title = "MOMP Module Score", y = "Score")
+
+# === 6. Plot cGAS-STING ===
+p2 <- ggplot(df, aes(x = Group, y = CGAS_STING, fill = Group)) +
+  ... +
+  labs(title = "cGAS-STING Module Score", y = "Score")
+
+# === 7. Combine and export ===
+combined_plot <- p1 | p2
+ggsave("Module_Scores_PNC_vs_CAAX.png", plot = combined_plot, width = 10, height = 6, dpi = 600, units = "in", bg = "white")
