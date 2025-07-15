@@ -1,0 +1,1811 @@
+Sys.setenv(Language="en")
+library(ggplot2)
+library(R.utils)
+library(scDblFinder)
+library(Seurat)
+library(tidyverse)
+library(dplyr)
+library(patchwork)
+library(Matrix)
+library(SoupX)
+library(harmony)
+library(SeuratDisk)
+library(DoubletFinder)
+library(scds)
+library(grid)
+rm(list=ls())
+
+setwd("D:/project2_cGAS-STING/scRNA_seq/H24b_zf/soupx/soupx marker gene visualization")
+cr_path <- "D:/project2_cGAS-STING/scRNA_seq/H24b_zf"
+rawDir <- file.path(cr_path, "raw_feature_bc_matrix")
+filtDir <- file.path(cr_path, "filtered_feature_bc_matrix") 
+tod <- Read10X(data.dir = rawDir)
+toc <- Read10X(data.dir = filtDir)
+sc = SoupChannel(tod, toc, calcSoupProfile = F)
+sc <- estimateSoup(sc, soupRange = c(1, 100))
+###according to the umi graph from the 10x Genomics 
+###load the 10x cluster
+clusters <- read.csv(("D:/project2_cGAS-STING/scRNA_seq/H24b_zf/analysis/clustering/gene_expression_graphclust/clusters.csv"), row.names=1)
+cluster_map <- setNames(clusters$Cluster, rownames(clusters))
+sc <- setClusters(sc, clusters = cluster_map)
+
+
+###load UMAP from 10x cluster
+umap <- read.csv(("D:/project2_cGAS-STING/scRNA_seq/H24b_zf/analysis/umap/gene_expression_2_components/projection.csv"), row.names=1)
+sc <- setDR(sc, umap)
+
+#view top ambient genes
+#often mitochondrial genes, ribosomal proteins, globins, actins, or highly expressed genes leaked from lysed cells.
+head(sc$soupProfile[order(sc$soupProfile$counts, decreasing = TRUE), ], 300)
+
+#top ambient gene with known cell type specificity (top 300 list)
+#with a known expected distribution, ideal genes to map the false positive from the soup. 
+HSGs <- c("lyz", "npsn", "mpx", #neutrophils
+          "krt4", "krt5", "krtt1c19e", #kerationcytes
+          "mfap4", "apoc1", "ctsl.1", "ctsz", "havcr1", #macrophage
+          "hbbe1.3","hbae3","hbbe1.1", #hemoglobulin
+          "epcam", #epithelial
+          "ctsd", "spi1b", "srgn", "lcp1") #broad macrophage/neutrophil lineage
+#plot cluster in UMAP
+dd = sc$metaData
+dd$clusters = as.character(dd$clusters)
+
+
+for (gene in HSGs) {
+  if (gene %in% rownames(sc$toc)) {
+    counts <- sc$toc[gene, ]
+    dd[[gene]] <- counts  # assign as new column
+  } else {
+    message(paste("Gene not found in toc:", gene))
+  }
+}
+
+
+##visualize cell specific marker gene before SoupX cleaning
+#visualize neutrophil
+UMAP_soggy_lyz <- ggplot(dd, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = lyz > 0)) + ggtitle("H24 - soggy - lyz +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$lyz > 0)), size=7)
+UMAP_soggy_mpx <- ggplot(dd, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = mpx > 0)) + ggtitle("H24 - soggy - mpx +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$mpx > 0)), size=7)
+UMAP_soggy_npsn <- ggplot(dd, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = npsn > 0)) + ggtitle("H24 - soggy - npsn +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$npsn > 0)), size=7)
+(UMAP_soggy_lyz | UMAP_soggy_mpx | UMAP_soggy_npsn) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+ggsave("H24_soggy_neutrophil_umaps_beforesoupx.png", width = 12, height = 4, dpi = 300)
+
+
+#visualize keratinocytes
+UMAP_soggy_krt4 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = krt4 > 0)) + 
+  ggtitle("H24 - soggy - krt4 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$krt4 > 0)), size=7)
+UMAP_soggy_krt5 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = krt5 > 0)) + 
+  ggtitle("H24 - soggy - krt5 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$krt5 > 0)), size=7)
+UMAP_soggy_krtt1c19e <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = krtt1c19e > 0)) + 
+  ggtitle("H24 - soggy - krtt1c19e +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$krtt1c19e > 0)), size=7)
+(UMAP_soggy_krt4 | UMAP_soggy_krt5 | UMAP_soggy_krtt1c19e) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+ggsave("H24_soggy_keratinocytes_umaps_beforesoupx.png", width = 12, height = 4, dpi = 300)
+
+#visualize macrophage
+UMAP_soggy_mfap4 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = mfap4 > 0)) + ggtitle("H24 - soggy - mfap4 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$mfap4 > 0)), size=7)
+UMAP_soggy_apoc1 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = apoc1 > 0)) + ggtitle("H24 - soggy - apoc1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$apoc1 > 0)), size=7)
+UMAP_soggy_ctsl.1 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = ctsl.1 > 0)) + ggtitle("H24 - soggy - ctsl.1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$ctsl.1 > 0)), size=7)
+UMAP_soggy_havcr1 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = havcr1 > 0))  + ggtitle("H24 - soggy - havcr1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$havcr1 > 0)), size=7)
+UMAP_soggy_ctsz <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = ctsz > 0)) + ggtitle("H24 - soggy - ctsz +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$ctsz > 0)), size=7)
+(UMAP_soggy_mfap4 | UMAP_soggy_apoc1 | UMAP_soggy_ctsl.1 |  UMAP_soggy_havcr1 | UMAP_soggy_ctsz ) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+ggsave("H24_soggy_macrophage_umaps_beforesoupx.png", width = 12, height = 4, dpi = 300)
+
+#hemaglobulin
+UMAP_soggy_hbae3 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbae3 > 0))  + 
+  ggtitle("H24 - soggy - hbae3 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$hbae3 > 0)), size=7)
+UMAP_soggy_hbbe1.3 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbbe1.3 > 0))  + 
+  ggtitle("H24 - soggy - hbbe1.3 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$hbbe1.3 > 0)), size=7)
+UMAP_soggy_hbbe1.1 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbbe1.1 > 0))  +
+  ggtitle("H24 - soggy - hbbe1.1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$hbbe1.1 > 0)), size=7)
+(UMAP_soggy_hbae3 | UMAP_soggy_hbbe1.3 | UMAP_soggy_hbbe1.1) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+ggsave("H24_soggy_hemaglobulin_umaps_beforesoupx.png", width = 12, height = 4, dpi = 300)
+
+
+##profile and visually inspected soup genes in UMAP 
+#to see which cell cluster express the cell-specific marker
+#they should cluster in specific place instead evenly or widespread. 
+
+#neutrophil
+UMAP_chunks_lyz <- plotMarkerMap(sc, "lyz") + ggtitle("H24 - Expression Above Soup - lyz")
+UMAP_chunks_mpx <-plotMarkerMap(sc, "mpx") + ggtitle("H24 - Expression Above Soup - mpx")
+UMAP_chunks_npsn <-plotMarkerMap(sc, "npsn") + ggtitle("H24 - Expression Above Soup - npsn")
+
+
+
+#kertinocytes
+UMAP_chunks_krt4 <-plotMarkerMap(sc, "krt4") + ggtitle("H24 - Expression Above Soup - krt4")
+UMAP_chunks_krt5 <-plotMarkerMap(sc, "krt5") + ggtitle("H24 - Expression Above Soup - krt5")
+UMAP_chunks_krtt1c19e <-plotMarkerMap(sc, "krtt1c19e") + ggtitle("H24 - Expression Above Soup - krtt1c19e")
+
+#macrophages
+UMAP_chunks_mfap4 <-plotMarkerMap(sc, "mfap4") + ggtitle("H24 - Expression Above Soup - mfap4")
+UMAP_chunks_havcr1 <-plotMarkerMap(sc, "havcr1") + ggtitle("H24 - Expression Above Soup - havcr1")
+UMAP_chunks_apoc1 <-plotMarkerMap(sc, "apoc1") + ggtitle("H24 - Expression Above Soup - apoc1")
+UMAP_chunks_ctsl.1 <-plotMarkerMap(sc, "ctsl.1") + ggtitle("H24 - Expression Above Soup - ctsl.1")
+UMAP_chunks_ctsz <-plotMarkerMap(sc, "ctsz") + ggtitle("H24 - Expression Above Soup - ctsz")
+
+#haemoglobin
+UMAP_chunks_hbae3 <-plotMarkerMap(sc, "hbae3") + ggtitle("H24 - Expression Above Soup - hbae3")
+UMAP_chunks_hbbe1.3 <-plotMarkerMap(sc, "hbbe1.3") + ggtitle("H24 - Expression Above Soup - hbbe1.3")
+UMAP_chunks_hbbe1.1 <-plotMarkerMap(sc, "hbbe1.1") + ggtitle("H24 - Expression Above Soup - hbbe1.1")
+
+marker_list <- list(
+  Neutrophil = c("lyz", "mpx", "npsn"),
+  Macrophage = c("mfap4", "apoc1", "ctsl.1", "ctsz", "havcr1"),
+  BasalEpi = c("krt5", "krtt1c19e", "tp63"),
+  SuperficialEpi = c("krt4", "krt17"),
+  FibroEpi = c("col1a1b", "col1a2", "pdgfra"),
+  EpidermalSC = c("sox9b", "tp63"),
+  PNC = c("lamc2", "itga6b", "mmp9", "il1b"),
+  NeuralProgenitor = c("sox2", "nestin", "fabp7a"),
+  Neuron = c("elavl3", "snap25a", "tubb3"),
+  Ionocyte = c("foxi3a", "cftr", "atp6v1aa"),
+  Endothelial = c("kdrl", "cdh5", "egfl7"),
+  DifferentiatingEpi = c("krt18", "krt8"),
+  Cardiomyocyte = c("tnnt2a", "myh6", "vmhc"),
+  Retinal = c("crx", "vsx2", "rho"),
+  Erythrocyte = c("hbaa1", "hbbe1", "hbae1.3"),
+  Chondrocyte = c("col2a1a", "acana", "sox9a")
+)
+
+###average expression 
+genes_in_data <- rownames(sc$toc)
+filtered_marker_list <- lapply(marker_list, function(glist) {
+  intersect(glist, genes_in_data)
+})
+filtered_marker_list <- Filter(function(x) length(x) > 0, filtered_marker_list)
+plotMarkerDistribution(sc, nonExpressedGeneList = filtered_marker_list)
+
+###each gene expression
+flat_marker_list <- list()
+for (celltype in names(marker_list)) {
+  for (gene in marker_list[[celltype]]) {
+    flat_marker_list[[paste(celltype, gene, sep = "_")]] <- gene
+  }
+}
+genes_in_data <- rownames(sc$toc)
+flat_marker_list <- list()
+for (celltype in names(marker_list)) {
+  for (gene in marker_list[[celltype]]) {
+    if (gene %in% genes_in_data) {
+      # 同时要求该 gene 在 toc 中至少有一行非零
+      if (sum(sc$toc[gene, ] > 0) > 10) {
+        flat_marker_list[[paste(celltype, gene, sep = "_")]] <- gene
+      }
+    }
+  }
+}
+plotMarkerDistribution(sc, nonExpressedGeneList = flat_marker_list) +
+  ggplot2::theme(axis.text.x = element_text(angle = 45, hjust = 1))
+##seemslike 1-5%
+##auto-0.01(1%)
+sc <- autoEstCont(sc)
+sc$fit
+cleaned_counts <- adjustCounts(sc)
+
+##manually
+sc_manual <- setContaminationFraction(sc, 0.04)
+counts_manual <- adjustCounts(sc_manual)
+
+##which gene is affected by the contamination(auto version)
+cntSoggy <- rowSums(sc$toc > 0) 
+cntStrained <- rowSums(cleaned_counts > 0) 
+mostZeroed <- sort((cntSoggy - cntStrained)/cntSoggy, decreasing = TRUE)
+setwd("D:/project2_cGAS-STING/scRNA_seq/H24a_zf/soupx")
+write.csv(mostZeroed, "QC_post_SoupX_MostZeroed.csv", row.names = TRUE)
+
+genesCleaned <- as.data.frame(table(rowSums(sc$toc > cleaned_counts)/rowSums(sc$toc > 0)))
+rownames(genesCleaned) <- c("Untouched", "Cleaned")
+write.csv(genesCleaned, "QC_post_SoupX_GenesCleaned.csv", row.names = TRUE)
+
+df <- dd  # dd 是你从 sc$metaData 得到的 UMAP + cluster 数据
+for (gene in HSGs) {
+  if (gene %in% rownames(cleaned_counts)) {
+    df[[paste0(gene, "_no_soup")]] <- cleaned_counts[gene, ]
+  } else {
+    message(paste("Gene not found in counts_no_soup:", gene))
+  }
+}
+
+#neutrophil
+UMAP_strained_lyz <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = lyz_no_soup > 0)) + 
+  ggtitle("H24 - strained - lyz +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$lyz_no_soup > 0)), size=7)
+UMAP_strained_mpx <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = mpx_no_soup > 0)) + 
+  ggtitle("H24 - strained - mpx +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$mpx_no_soup > 0)), size=7)
+UMAP_strained_npsn <- ggplot(df, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = npsn_no_soup > 0)) + ggtitle("H24 - strained - npsn +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$npsn_no_soup > 0)), size=7)
+combined_plot <- (UMAP_strained_lyz | UMAP_strained_mpx | UMAP_strained_npsn) +
+  plot_annotation(title = "Auto version") &
+  theme(legend.position = "bottom")
+print(combined_plot)
+ggsave("H24_auto_version_neutrophil_umaps.png", combined_plot,
+       width = 12, height = 4, dpi = 300)
+
+
+#kertinocytes
+UMAP_strained_krt4 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = krt4_no_soup > 0)) + 
+  ggtitle("H24 - strained - krt4 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$krt4_no_soup > 0)), size=7)
+UMAP_strained_krt5 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = krt5_no_soup > 0)) + 
+  ggtitle("H24 - strained - krt5 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$krt5_no_soup > 0)), size=7)
+UMAP_strained_krtt1c19e <- ggplot(df, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = krtt1c19e_no_soup > 0)) + ggtitle("H24 - strained - krtt1c19e +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$krtt1c19e_no_soup > 0)), size=7)
+keratinocyte_plot <- (UMAP_strained_krt4 | UMAP_strained_krt5 | UMAP_strained_krtt1c19e) +
+  plot_annotation(title = "H24 - Auto version - Keratinocyte markers") &
+  theme(legend.position = "bottom")
+ggsave("H24_soupx_KeratinocyteMarkers_umaps.png", keratinocyte_plot,
+       width = 14, height = 4, dpi = 300)
+
+
+#macrophages
+UMAP_strained_mfap4 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = mfap4_no_soup > 0))  + 
+  ggtitle("H24 - strained - mfap4 +ve cells")  + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$mfap4_no_soup > 0)), size=7)
+UMAP_strained_havcr1 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = havcr1_no_soup > 0))  + 
+  ggtitle("H24 - strained - havcr1 +ve cells")  + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$havcr1_no_soup > 0)), size=7)
+UMAP_strained_apoc1 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = apoc1_no_soup > 0)) + 
+  ggtitle("H24 - strained - apoc1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$apoc1_no_soup > 0)), size=7)
+UMAP_strained_ctsl.1 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = ctsl.1_no_soup > 0)) + 
+  ggtitle("H24 - strained - ctsl.1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$ctsl.1_no_soup > 0)), size=7)
+UMAP_strained_ctsz <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = ctsz_no_soup > 0)) + 
+  ggtitle("H24 - strained - ctsz +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$ctsz_no_soup > 0)), size=7)
+macrophage_plot <- (UMAP_strained_mfap4 | UMAP_strained_havcr1 | UMAP_strained_apoc1 | 
+                      UMAP_strained_ctsl.1 | UMAP_strained_ctsz) +
+  plot_annotation(title = "H24 - Auto version - Macrophage markers") &
+  theme(legend.position = "bottom")
+
+ggsave("H24_soupx_MacrophageMarkers_umaps.png", macrophage_plot,
+       width = 16, height = 4, dpi = 300)
+
+
+#haemoglobin
+UMAP_strained_hbae3 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbae3_no_soup > 0))  + 
+  ggtitle("H24 - strained - hbae3 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$hbae3_no_soup > 0)), size=7)
+UMAP_strained_hbbe1.3 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbbe1.3_no_soup > 0))  + 
+  ggtitle("H24 - strained - hbbe1.3 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$hbbe1.3_no_soup > 0)), size=7)
+UMAP_strained_hbbe1.1 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbbe1.1_no_soup > 0))  + 
+  ggtitle("H24 - strained - hbbe1.1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$hbbe1.1_no_soup > 0)), size=7)
+haemoglobin_plot <- (UMAP_strained_hbae3 | UMAP_strained_hbbe1.3 | UMAP_strained_hbbe1.1) +
+  plot_annotation(title = "H24 - Auto version - Hemoglobin markers") &
+  theme(legend.position = "bottom")
+
+ggsave("H24_soupx_HemoglobinMarkers_umaps.png", haemoglobin_plot,
+       width = 12, height = 4, dpi = 300)
+
+
+###manual version
+
+df_manual <- dd  # 从 sc$metaData 拿 UMAP + cluster 信息
+
+for (gene in HSGs) {
+  if (gene %in% rownames(counts_manual)) {
+    df_manual[[paste0(gene, "_manual_no_soup")]] <- counts_manual[gene, ]
+  } else {
+    message(paste("Gene not found in counts_manual:", gene))
+  }
+}
+
+###neutrophil
+UMAP_manual_lyz <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = lyz_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("H24 - manual - lyz +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$lyz_manual_no_soup > 0)), size = 3)
+
+UMAP_manual_mpx <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = mpx_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("H24 - manual - mpx +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$mpx_manual_no_soup > 0)), size = 3)
+
+UMAP_manual_npsn <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = npsn_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("H24 - manual - npsn +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$npsn_manual_no_soup > 0)), size = 3)
+
+manual_neutrophil_plot <- (UMAP_manual_lyz | UMAP_manual_mpx | UMAP_manual_npsn) +
+  plot_annotation(title = "H24 - Manual version - Neutrophil markers") &
+  theme(legend.position = "bottom")
+
+ggsave("H24_manual_version_neutrophil_umaps.png", manual_neutrophil_plot, width = 12, height = 4, dpi = 300)
+
+
+###keratinocyte
+UMAP_manual_krt4 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = krt4_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("H24 - manual - krt4 +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$krt4_manual_no_soup > 0)), size = 3)
+
+UMAP_manual_krt5 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = krt5_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("H24 - manual - krt5 +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$krt5_manual_no_soup > 0)), size = 3)
+
+UMAP_manual_krtt1c19e <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = krtt1c19e_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("H24 - manual - krtt1c19e +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$krtt1c19e_manual_no_soup > 0)), size = 3)
+
+manual_keratinocyte_plot <- (UMAP_manual_krt4 | UMAP_manual_krt5 | UMAP_manual_krtt1c19e) +
+  plot_annotation(title = "H24 - Manual version - Keratinocyte markers") &
+  theme(legend.position = "bottom")
+
+ggsave("H24_manual_version_KeratinocyteMarkers_umaps.png", manual_keratinocyte_plot, width = 14, height = 4, dpi = 300)
+
+
+###macrophage
+UMAP_manual_mfap4 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = mfap4_manual_no_soup > 0)) +
+  ggtitle("H24 - manual - mfap4 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$mfap4_manual_no_soup > 0)), size = 7)
+
+UMAP_manual_havcr1 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = havcr1_manual_no_soup > 0)) +
+  ggtitle("H24 - manual - havcr1 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$havcr1_manual_no_soup > 0)), size = 7)
+
+UMAP_manual_apoc1 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = apoc1_manual_no_soup > 0)) +
+  ggtitle("H24 - manual - apoc1 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$apoc1_manual_no_soup > 0)), size = 7)
+
+UMAP_manual_ctsl1 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = `ctsl.1_manual_no_soup` > 0)) +
+  ggtitle("H24 - manual - ctsl.1 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$`ctsl.1_manual_no_soup` > 0)), size = 7)
+
+UMAP_manual_ctsz <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = ctsz_manual_no_soup > 0)) +
+  ggtitle("H24 - manual - ctsz +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$ctsz_manual_no_soup > 0)), size = 7)
+
+macrophage_manual_plot <- (
+  UMAP_manual_mfap4 | UMAP_manual_havcr1 | UMAP_manual_apoc1 |
+    UMAP_manual_ctsl1 | UMAP_manual_ctsz
+) + plot_annotation(title = "H24 - Manual version - Macrophage markers") &
+  theme(legend.position = "bottom")
+
+ggsave("H24_manual_MacrophageMarkers_umaps.png", macrophage_manual_plot, width = 16, height = 4, dpi = 300)
+
+
+
+
+###hemoglobin
+UMAP_manual_hbae3 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = hbae3_manual_no_soup > 0)) +
+  ggtitle("H24 - manual - hbae3 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$hbae3_manual_no_soup > 0)), size = 7)
+
+UMAP_manual_hbbe1_3 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = `hbbe1.3_manual_no_soup` > 0)) +
+  ggtitle("H24 - manual - hbbe1.3 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$`hbbe1.3_manual_no_soup` > 0)), size = 7)
+
+UMAP_manual_hbbe1_1 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = `hbbe1.1_manual_no_soup` > 0)) +
+  ggtitle("H24 - manual - hbbe1.1 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$`hbbe1.1_manual_no_soup` > 0)), size = 7)
+
+hemoglobin_manual_plot <- (
+  UMAP_manual_hbae3 | UMAP_manual_hbbe1_3 | UMAP_manual_hbbe1_1
+) + plot_annotation(title = "H24 - Manual version - Hemoglobin markers") &
+  theme(legend.position = "bottom")
+
+ggsave("H24_manual_HemoglobinMarkers_umaps.png", hemoglobin_manual_plot, width = 12, height = 4, dpi = 300)
+
+seurat_soupx_H24b <- CreateSeuratObject(counts = counts_manual, project="SoupCleaned_H24b")
+
+#save the postSoupX data
+saveRDS(seurat_soupx_H24b, file = "H24b_postSoupX_20250417.rds")
+
+Sys.setenv(Language="en")
+library(ggplot2)
+library(R.utils)
+library(scDblFinder)
+library(Seurat)
+library(tidyverse)
+library(dplyr)
+library(patchwork)
+library(Matrix)
+library(SoupX)
+library(harmony)
+library(SeuratDisk)
+library(DoubletFinder)
+library(scds)
+library(grid)
+rm(list=ls())
+
+setwd("D:/project2_cGAS-STING/scRNA_seq/H24a_zf/soupx/soupx marker gene visualization")
+cr_path <- "D:/project2_cGAS-STING/scRNA_seq/H24a_zf"
+rawDir <- file.path(cr_path, "raw_feature_bc_matrix")
+filtDir <- file.path(cr_path, "filtered_feature_bc_matrix") 
+tod <- Read10X(data.dir = rawDir)
+toc <- Read10X(data.dir = filtDir)
+sc = SoupChannel(tod, toc, calcSoupProfile = F)
+sc <- estimateSoup(sc, soupRange = c(1, 100))
+###according to the umi graph from the 10x Genomics 
+###load the 10x cluster
+clusters <- read.csv(("D:/project2_cGAS-STING/scRNA_seq/H24a_zf/analysis/clustering/gene_expression_graphclust/clusters.csv"), row.names=1)
+cluster_map <- setNames(clusters$Cluster, rownames(clusters))
+sc <- setClusters(sc, clusters = cluster_map)
+
+
+###load UMAP from 10x cluster
+umap <- read.csv(("D:/project2_cGAS-STING/scRNA_seq/H24a_zf/analysis/umap/gene_expression_2_components/projection.csv"), row.names=1)
+sc <- setDR(sc, umap)
+
+#view top ambient genes
+#often mitochondrial genes, ribosomal proteins, globins, actins, or highly expressed genes leaked from lysed cells.
+head(sc$soupProfile[order(sc$soupProfile$counts, decreasing = TRUE), ], 300)
+
+#top ambient gene with known cell type specificity (top 300 list)
+#with a known expected distribution, ideal genes to map the false positive from the soup. 
+HSGs <- c("lyz", "npsn", "mpx", #neutrophils
+          "krt4", "krt5", "krtt1c19e", #kerationcytes
+          "mfap4", "apoc1", "ctsl.1", "ctsz", "havcr1", #macrophage
+          "hbbe1.3","hbae3","hbbe1.1", #hemoglobulin
+          "epcam", #epithelial
+          "ctsd", "spi1b", "srgn", "lcp1") #broad macrophage/neutrophil lineage
+#plot cluster in UMAP
+dd = sc$metaData
+dd$clusters = as.character(dd$clusters)
+
+
+for (gene in HSGs) {
+  if (gene %in% rownames(sc$toc)) {
+    counts <- sc$toc[gene, ]
+    dd[[gene]] <- counts  # assign as new column
+  } else {
+    message(paste("Gene not found in toc:", gene))
+  }
+ }
+  
+
+##visualize cell specific marker gene before SoupX cleaning
+#visualize neutrophil
+UMAP_soggy_lyz <- ggplot(dd, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = lyz > 0)) + ggtitle("H24 - soggy - lyz +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$lyz > 0)), size=7)
+UMAP_soggy_mpx <- ggplot(dd, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = mpx > 0)) + ggtitle("H24 - soggy - mpx +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$mpx > 0)), size=7)
+UMAP_soggy_npsn <- ggplot(dd, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = npsn > 0)) + ggtitle("H24 - soggy - npsn +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$npsn > 0)), size=7)
+(UMAP_soggy_lyz | UMAP_soggy_mpx | UMAP_soggy_npsn) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+ggsave("H24_soggy_neutrophil_umaps_beforesoupx.png", width = 12, height = 4, dpi = 300)
+
+
+#visualize keratinocytes
+UMAP_soggy_krt4 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = krt4 > 0)) + 
+  ggtitle("H24 - soggy - krt4 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$krt4 > 0)), size=7)
+UMAP_soggy_krt5 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = krt5 > 0)) + 
+  ggtitle("H24 - soggy - krt5 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$krt5 > 0)), size=7)
+UMAP_soggy_krtt1c19e <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = krtt1c19e > 0)) + 
+  ggtitle("H24 - soggy - krtt1c19e +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$krtt1c19e > 0)), size=7)
+(UMAP_soggy_krt4 | UMAP_soggy_krt5 | UMAP_soggy_krtt1c19e) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+ggsave("H24_soggy_keratinocytes_umaps_beforesoupx.png", width = 12, height = 4, dpi = 300)
+
+#visualize macrophage
+UMAP_soggy_mfap4 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = mfap4 > 0)) + ggtitle("H24 - soggy - mfap4 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$mfap4 > 0)), size=7)
+UMAP_soggy_apoc1 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = apoc1 > 0)) + ggtitle("H24 - soggy - apoc1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$apoc1 > 0)), size=7)
+UMAP_soggy_ctsl.1 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = ctsl.1 > 0)) + ggtitle("H24 - soggy - ctsl.1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$ctsl.1 > 0)), size=7)
+UMAP_soggy_havcr1 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = havcr1 > 0))  + ggtitle("H24 - soggy - havcr1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$havcr1 > 0)), size=7)
+UMAP_soggy_ctsz <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = ctsz > 0)) + ggtitle("H24 - soggy - ctsz +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$ctsz > 0)), size=7)
+(UMAP_soggy_mfap4 | UMAP_soggy_apoc1 | UMAP_soggy_ctsl.1 |  UMAP_soggy_havcr1 | UMAP_soggy_ctsz ) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+ggsave("H24_soggy_macrophage_umaps_beforesoupx.png", width = 12, height = 4, dpi = 300)
+
+#hemaglobulin
+UMAP_soggy_hbae3 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbae3 > 0))  + 
+  ggtitle("H24 - soggy - hbae3 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$hbae3 > 0)), size=7)
+UMAP_soggy_hbbe1.3 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbbe1.3 > 0))  + 
+  ggtitle("H24 - soggy - hbbe1.3 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$hbbe1.3 > 0)), size=7)
+UMAP_soggy_hbbe1.1 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbbe1.1 > 0))  +
+  ggtitle("H24 - soggy - hbbe1.1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$hbbe1.1 > 0)), size=7)
+(UMAP_soggy_hbae3 | UMAP_soggy_hbbe1.3 | UMAP_soggy_hbbe1.1) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+ggsave("H24_soggy_hemaglobulin_umaps_beforesoupx.png", width = 12, height = 4, dpi = 300)
+
+
+##profile and visually inspected soup genes in UMAP 
+#to see which cell cluster express the cell-specific marker
+#they should cluster in specific place instead evenly or widespread. 
+
+#neutrophil
+UMAP_chunks_lyz <- plotMarkerMap(sc, "lyz") + ggtitle("H24 - Expression Above Soup - lyz")
+UMAP_chunks_mpx <-plotMarkerMap(sc, "mpx") + ggtitle("H24 - Expression Above Soup - mpx")
+UMAP_chunks_npsn <-plotMarkerMap(sc, "npsn") + ggtitle("H24 - Expression Above Soup - npsn")
+
+
+
+#kertinocytes
+UMAP_chunks_krt4 <-plotMarkerMap(sc, "krt4") + ggtitle("H24 - Expression Above Soup - krt4")
+UMAP_chunks_krt5 <-plotMarkerMap(sc, "krt5") + ggtitle("H24 - Expression Above Soup - krt5")
+UMAP_chunks_krtt1c19e <-plotMarkerMap(sc, "krtt1c19e") + ggtitle("H24 - Expression Above Soup - krtt1c19e")
+
+#macrophages
+UMAP_chunks_mfap4 <-plotMarkerMap(sc, "mfap4") + ggtitle("H24 - Expression Above Soup - mfap4")
+UMAP_chunks_havcr1 <-plotMarkerMap(sc, "havcr1") + ggtitle("H24 - Expression Above Soup - havcr1")
+UMAP_chunks_apoc1 <-plotMarkerMap(sc, "apoc1") + ggtitle("H24 - Expression Above Soup - apoc1")
+UMAP_chunks_ctsl.1 <-plotMarkerMap(sc, "ctsl.1") + ggtitle("H24 - Expression Above Soup - ctsl.1")
+UMAP_chunks_ctsz <-plotMarkerMap(sc, "ctsz") + ggtitle("H24 - Expression Above Soup - ctsz")
+
+#haemoglobin
+UMAP_chunks_hbae3 <-plotMarkerMap(sc, "hbae3") + ggtitle("H24 - Expression Above Soup - hbae3")
+UMAP_chunks_hbbe1.3 <-plotMarkerMap(sc, "hbbe1.3") + ggtitle("H24 - Expression Above Soup - hbbe1.3")
+UMAP_chunks_hbbe1.1 <-plotMarkerMap(sc, "hbbe1.1") + ggtitle("H24 - Expression Above Soup - hbbe1.1")
+
+marker_list <- list(
+  Neutrophil = c("lyz", "mpx", "npsn"),
+  Macrophage = c("mfap4", "apoc1", "ctsl.1", "ctsz", "havcr1"),
+  BasalEpi = c("krt5", "krtt1c19e", "tp63"),
+  SuperficialEpi = c("krt4", "krt17"),
+  FibroEpi = c("col1a1b", "col1a2", "pdgfra"),
+  EpidermalSC = c("sox9b", "tp63"),
+  PNC = c("lamc2", "itga6b", "mmp9", "il1b"),
+  NeuralProgenitor = c("sox2", "nestin", "fabp7a"),
+  Neuron = c("elavl3", "snap25a", "tubb3"),
+  Ionocyte = c("foxi3a", "cftr", "atp6v1aa"),
+  Endothelial = c("kdrl", "cdh5", "egfl7"),
+  DifferentiatingEpi = c("krt18", "krt8"),
+  Cardiomyocyte = c("tnnt2a", "myh6", "vmhc"),
+  Retinal = c("crx", "vsx2", "rho"),
+  Erythrocyte = c("hbaa1", "hbbe1", "hbae1.3"),
+  Chondrocyte = c("col2a1a", "acana", "sox9a")
+)
+
+###average expression 
+genes_in_data <- rownames(sc$toc)
+filtered_marker_list <- lapply(marker_list, function(glist) {
+  intersect(glist, genes_in_data)
+})
+filtered_marker_list <- Filter(function(x) length(x) > 0, filtered_marker_list)
+plotMarkerDistribution(sc, nonExpressedGeneList = filtered_marker_list)
+
+###each gene expression
+flat_marker_list <- list()
+for (celltype in names(marker_list)) {
+  for (gene in marker_list[[celltype]]) {
+    flat_marker_list[[paste(celltype, gene, sep = "_")]] <- gene
+  }
+}
+genes_in_data <- rownames(sc$toc)
+flat_marker_list <- list()
+for (celltype in names(marker_list)) {
+  for (gene in marker_list[[celltype]]) {
+    if (gene %in% genes_in_data) {
+      # 同时要求该 gene 在 toc 中至少有一行非零
+      if (sum(sc$toc[gene, ] > 0) > 10) {
+        flat_marker_list[[paste(celltype, gene, sep = "_")]] <- gene
+      }
+    }
+  }
+}
+plotMarkerDistribution(sc, nonExpressedGeneList = flat_marker_list) +
+  ggplot2::theme(axis.text.x = element_text(angle = 45, hjust = 1))
+##seemslike 1-5%
+##auto-0.01(1%)
+sc <- autoEstCont(sc)
+sc$fit
+cleaned_counts <- adjustCounts(sc)
+
+##manually
+sc_manual <- setContaminationFraction(sc, 0.03)
+counts_manual <- adjustCounts(sc_manual)
+
+##which gene is affected by the contamination(auto version)
+cntSoggy <- rowSums(sc$toc > 0) 
+cntStrained <- rowSums(cleaned_counts > 0) 
+mostZeroed <- sort((cntSoggy - cntStrained)/cntSoggy, decreasing = TRUE)
+setwd("D:/project2_cGAS-STING/scRNA_seq/H24a_zf/soupx")
+write.csv(mostZeroed, "QC_post_SoupX_MostZeroed.csv", row.names = TRUE)
+
+genesCleaned <- as.data.frame(table(rowSums(sc$toc > cleaned_counts)/rowSums(sc$toc > 0)))
+rownames(genesCleaned) <- c("Untouched", "Cleaned")
+write.csv(genesCleaned, "QC_post_SoupX_GenesCleaned.csv", row.names = TRUE)
+
+df <- dd  # dd 是你从 sc$metaData 得到的 UMAP + cluster 数据
+for (gene in HSGs) {
+  if (gene %in% rownames(cleaned_counts)) {
+    df[[paste0(gene, "_no_soup")]] <- cleaned_counts[gene, ]
+  } else {
+    message(paste("Gene not found in counts_no_soup:", gene))
+  }
+}
+
+#neutrophil
+UMAP_strained_lyz <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = lyz_no_soup > 0)) + 
+  ggtitle("H24 - strained - lyz +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$lyz_no_soup > 0)), size=7)
+UMAP_strained_mpx <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = mpx_no_soup > 0)) + 
+  ggtitle("H24 - strained - mpx +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$mpx_no_soup > 0)), size=7)
+UMAP_strained_npsn <- ggplot(df, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = npsn_no_soup > 0)) + ggtitle("H24 - strained - npsn +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$npsn_no_soup > 0)), size=7)
+combined_plot <- (UMAP_strained_lyz | UMAP_strained_mpx | UMAP_strained_npsn) +
+  plot_annotation(title = "Auto version") &
+  theme(legend.position = "bottom")
+print(combined_plot)
+ggsave("H24_auto_version_neutrophil_umaps.png", combined_plot,
+       width = 12, height = 4, dpi = 300)
+
+
+#kertinocytes
+UMAP_strained_krt4 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = krt4_no_soup > 0)) + 
+  ggtitle("H24 - strained - krt4 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$krt4_no_soup > 0)), size=7)
+UMAP_strained_krt5 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = krt5_no_soup > 0)) + 
+  ggtitle("H24 - strained - krt5 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$krt5_no_soup > 0)), size=7)
+UMAP_strained_krtt1c19e <- ggplot(df, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = krtt1c19e_no_soup > 0)) + ggtitle("H24 - strained - krtt1c19e +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$krtt1c19e_no_soup > 0)), size=7)
+keratinocyte_plot <- (UMAP_strained_krt4 | UMAP_strained_krt5 | UMAP_strained_krtt1c19e) +
+  plot_annotation(title = "H24 - Auto version - Keratinocyte markers") &
+  theme(legend.position = "bottom")
+ggsave("H24_soupx_KeratinocyteMarkers_umaps.png", keratinocyte_plot,
+       width = 14, height = 4, dpi = 300)
+
+
+#macrophages
+UMAP_strained_mfap4 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = mfap4_no_soup > 0))  + 
+  ggtitle("H24 - strained - mfap4 +ve cells")  + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$mfap4_no_soup > 0)), size=7)
+UMAP_strained_havcr1 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = havcr1_no_soup > 0))  + 
+  ggtitle("H24 - strained - havcr1 +ve cells")  + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$havcr1_no_soup > 0)), size=7)
+UMAP_strained_apoc1 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = apoc1_no_soup > 0)) + 
+  ggtitle("H24 - strained - apoc1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$apoc1_no_soup > 0)), size=7)
+UMAP_strained_ctsl.1 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = ctsl.1_no_soup > 0)) + 
+  ggtitle("H24 - strained - ctsl.1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$ctsl.1_no_soup > 0)), size=7)
+UMAP_strained_ctsz <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = ctsz_no_soup > 0)) + 
+  ggtitle("H24 - strained - ctsz +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$ctsz_no_soup > 0)), size=7)
+macrophage_plot <- (UMAP_strained_mfap4 | UMAP_strained_havcr1 | UMAP_strained_apoc1 | 
+                      UMAP_strained_ctsl.1 | UMAP_strained_ctsz) +
+  plot_annotation(title = "H24 - Auto version - Macrophage markers") &
+  theme(legend.position = "bottom")
+
+ggsave("H24_soupx_MacrophageMarkers_umaps.png", macrophage_plot,
+       width = 16, height = 4, dpi = 300)
+
+
+#haemoglobin
+UMAP_strained_hbae3 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbae3_no_soup > 0))  + 
+  ggtitle("H24 - strained - hbae3 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$hbae3_no_soup > 0)), size=7)
+UMAP_strained_hbbe1.3 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbbe1.3_no_soup > 0))  + 
+  ggtitle("H24 - strained - hbbe1.3 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$hbbe1.3_no_soup > 0)), size=7)
+UMAP_strained_hbbe1.1 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbbe1.1_no_soup > 0))  + 
+  ggtitle("H24 - strained - hbbe1.1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$hbbe1.1_no_soup > 0)), size=7)
+haemoglobin_plot <- (UMAP_strained_hbae3 | UMAP_strained_hbbe1.3 | UMAP_strained_hbbe1.1) +
+  plot_annotation(title = "H24 - Auto version - Hemoglobin markers") &
+  theme(legend.position = "bottom")
+
+ggsave("H24_soupx_HemoglobinMarkers_umaps.png", haemoglobin_plot,
+       width = 12, height = 4, dpi = 300)
+
+
+###manual version
+
+df_manual <- dd  # 从 sc$metaData 拿 UMAP + cluster 信息
+
+for (gene in HSGs) {
+  if (gene %in% rownames(counts_manual)) {
+    df_manual[[paste0(gene, "_manual_no_soup")]] <- counts_manual[gene, ]
+  } else {
+    message(paste("Gene not found in counts_manual:", gene))
+  }
+}
+
+###neutrophil
+UMAP_manual_lyz <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = lyz_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("H24 - manual - lyz +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$lyz_manual_no_soup > 0)), size = 3)
+
+UMAP_manual_mpx <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = mpx_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("H24 - manual - mpx +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$mpx_manual_no_soup > 0)), size = 3)
+
+UMAP_manual_npsn <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = npsn_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("H24 - manual - npsn +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$npsn_manual_no_soup > 0)), size = 3)
+
+manual_neutrophil_plot <- (UMAP_manual_lyz | UMAP_manual_mpx | UMAP_manual_npsn) +
+  plot_annotation(title = "H24 - Manual version - Neutrophil markers") &
+  theme(legend.position = "bottom")
+
+ggsave("H24_manual_version_neutrophil_umaps.png", manual_neutrophil_plot, width = 12, height = 4, dpi = 300)
+
+
+###keratinocyte
+UMAP_manual_krt4 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = krt4_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("H24 - manual - krt4 +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$krt4_manual_no_soup > 0)), size = 3)
+
+UMAP_manual_krt5 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = krt5_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("H24 - manual - krt5 +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$krt5_manual_no_soup > 0)), size = 3)
+
+UMAP_manual_krtt1c19e <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = krtt1c19e_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("H24 - manual - krtt1c19e +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$krtt1c19e_manual_no_soup > 0)), size = 3)
+
+manual_keratinocyte_plot <- (UMAP_manual_krt4 | UMAP_manual_krt5 | UMAP_manual_krtt1c19e) +
+  plot_annotation(title = "H24 - Manual version - Keratinocyte markers") &
+  theme(legend.position = "bottom")
+
+ggsave("H24_manual_version_KeratinocyteMarkers_umaps.png", manual_keratinocyte_plot, width = 14, height = 4, dpi = 300)
+
+
+###macrophage
+UMAP_manual_mfap4 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = mfap4_manual_no_soup > 0)) +
+  ggtitle("H24 - manual - mfap4 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$mfap4_manual_no_soup > 0)), size = 7)
+
+UMAP_manual_havcr1 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = havcr1_manual_no_soup > 0)) +
+  ggtitle("H24 - manual - havcr1 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$havcr1_manual_no_soup > 0)), size = 7)
+
+UMAP_manual_apoc1 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = apoc1_manual_no_soup > 0)) +
+  ggtitle("H24 - manual - apoc1 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$apoc1_manual_no_soup > 0)), size = 7)
+
+UMAP_manual_ctsl1 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = `ctsl.1_manual_no_soup` > 0)) +
+  ggtitle("H24 - manual - ctsl.1 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$`ctsl.1_manual_no_soup` > 0)), size = 7)
+
+UMAP_manual_ctsz <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = ctsz_manual_no_soup > 0)) +
+  ggtitle("H24 - manual - ctsz +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$ctsz_manual_no_soup > 0)), size = 7)
+
+macrophage_manual_plot <- (
+  UMAP_manual_mfap4 | UMAP_manual_havcr1 | UMAP_manual_apoc1 |
+    UMAP_manual_ctsl1 | UMAP_manual_ctsz
+) + plot_annotation(title = "H24 - Manual version - Macrophage markers") &
+  theme(legend.position = "bottom")
+
+ggsave("H24_manual_MacrophageMarkers_umaps.png", macrophage_manual_plot, width = 16, height = 4, dpi = 300)
+
+
+
+
+###hemoglobin
+UMAP_manual_hbae3 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = hbae3_manual_no_soup > 0)) +
+  ggtitle("H24 - manual - hbae3 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$hbae3_manual_no_soup > 0)), size = 7)
+
+UMAP_manual_hbbe1_3 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = `hbbe1.3_manual_no_soup` > 0)) +
+  ggtitle("H24 - manual - hbbe1.3 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$`hbbe1.3_manual_no_soup` > 0)), size = 7)
+
+UMAP_manual_hbbe1_1 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = `hbbe1.1_manual_no_soup` > 0)) +
+  ggtitle("H24 - manual - hbbe1.1 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$`hbbe1.1_manual_no_soup` > 0)), size = 7)
+
+hemoglobin_manual_plot <- (
+  UMAP_manual_hbae3 | UMAP_manual_hbbe1_3 | UMAP_manual_hbbe1_1
+) + plot_annotation(title = "H24 - Manual version - Hemoglobin markers") &
+  theme(legend.position = "bottom")
+
+ggsave("H24_manual_HemoglobinMarkers_umaps.png", hemoglobin_manual_plot, width = 12, height = 4, dpi = 300)
+
+seurat_soupx_H24a <- CreateSeuratObject(counts = counts_manual, project="SoupCleaned_H24a")
+
+#save the postSoupX data
+saveRDS(seurat_soupx_H24a, file = "H24a_postSoupX_20250417.rds")
+
+
+
+Sys.setenv(Language="en")
+library(ggplot2)
+library(R.utils)
+library(scDblFinder)
+library(Seurat)
+library(tidyverse)
+library(dplyr)
+library(patchwork)
+library(Matrix)
+library(SoupX)
+library(harmony)
+library(SeuratDisk)
+library(DoubletFinder)
+library(scds)
+library(grid)
+rm(list=ls())
+
+setwd("D:/project2_cGAS-STING/scRNA_seq/C24a_zf/soupx/soupx marker gene visualization")
+cr_path <- "D:/project2_cGAS-STING/scRNA_seq/C24a_zf"
+rawDir <- file.path(cr_path, "raw_feature_bc_matrix")
+filtDir <- file.path(cr_path, "filtered_feature_bc_matrix") 
+tod <- Read10X(data.dir = rawDir)
+toc <- Read10X(data.dir = filtDir)
+sc = SoupChannel(tod, toc, calcSoupProfile = F)
+sc <- estimateSoup(sc, soupRange = c(1, 100))
+###according to the umi graph from the 10x Genomics 
+###load the 10x cluster
+clusters <- read.csv(("D:/project2_cGAS-STING/scRNA_seq/C24a_zf/analysis/clustering/gene_expression_graphclust/clusters.csv"), row.names=1)
+cluster_map <- setNames(clusters$Cluster, rownames(clusters))
+sc <- setClusters(sc, clusters = cluster_map)
+
+
+###load UMAP from 10x cluster
+umap <- read.csv(("D:/project2_cGAS-STING/scRNA_seq/C24a_zf/analysis/umap/gene_expression_2_components/projection.csv"), row.names=1)
+sc <- setDR(sc, umap)
+
+#view top ambient genes
+#often mitochondrial genes, ribosomal proteins, globins, actins, or highly expressed genes leaked from lysed cells.
+head(sc$soupProfile[order(sc$soupProfile$counts, decreasing = TRUE), ], 300)
+
+#top ambient gene with known cell type specificity (top 300 list)
+#with a known expected distribution, ideal genes to map the false positive from the soup. 
+HSGs <- c("lyz", "npsn", "mpx", #neutrophils
+          "krt4", "krt5", "krtt1c19e", #kerationcytes
+          "mfap4", "apoc1", "ctsl.1", "ctsz", "havcr1", #macrophage
+          "hbbe1.3","hbae3","hbbe1.1", #hemoglobulin
+          "epcam", #epithelial
+          "ctsd", "spi1b", "srgn", "lcp1") #broad macrophage/neutrophil lineage
+#plot cluster in UMAP
+dd = sc$metaData
+dd$clusters = as.character(dd$clusters)
+
+
+for (gene in HSGs) {
+  if (gene %in% rownames(sc$toc)) {
+    counts <- sc$toc[gene, ]
+    dd[[gene]] <- counts  # assign as new column
+  } else {
+    message(paste("Gene not found in toc:", gene))
+  }
+}
+
+
+##visualize cell specific marker gene before SoupX cleaning
+#visualize neutrophil
+UMAP_soggy_lyz <- ggplot(dd, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = lyz > 0)) + ggtitle("C24 - soggy - lyz +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$lyz > 0)), size=7)
+UMAP_soggy_mpx <- ggplot(dd, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = mpx > 0)) + ggtitle("C24 - soggy - mpx +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$mpx > 0)), size=7)
+UMAP_soggy_npsn <- ggplot(dd, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = npsn > 0)) + ggtitle("C24 - soggy - npsn +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$npsn > 0)), size=7)
+(UMAP_soggy_lyz | UMAP_soggy_mpx | UMAP_soggy_npsn) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+ggsave("C24_soggy_neutrophil_umaps_beforesoupx.png", width = 12, height = 4, dpi = 300)
+
+
+#visualize keratinocytes
+UMAP_soggy_krt4 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = krt4 > 0)) + 
+  ggtitle("C24 - soggy - krt4 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$krt4 > 0)), size=7)
+UMAP_soggy_krt5 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = krt5 > 0)) + 
+  ggtitle("C24 - soggy - krt5 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$krt5 > 0)), size=7)
+UMAP_soggy_krtt1c19e <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = krtt1c19e > 0)) + 
+  ggtitle("C24 - soggy - krtt1c19e +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$krtt1c19e > 0)), size=7)
+(UMAP_soggy_krt4 | UMAP_soggy_krt5 | UMAP_soggy_krtt1c19e) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+ggsave("C24_soggy_keratinocytes_umaps_beforesoupx.png", width = 12, height = 4, dpi = 300)
+
+#visualize macrophage
+UMAP_soggy_mfap4 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = mfap4 > 0)) + ggtitle("C24 - soggy - mfap4 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$mfap4 > 0)), size=7)
+UMAP_soggy_apoc1 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = apoc1 > 0)) + ggtitle("C24 - soggy - apoc1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$apoc1 > 0)), size=7)
+UMAP_soggy_ctsl.1 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = ctsl.1 > 0)) + ggtitle("C24 - soggy - ctsl.1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$ctsl.1 > 0)), size=7)
+UMAP_soggy_havcr1 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = havcr1 > 0))  + ggtitle("C24 - soggy - havcr1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$havcr1 > 0)), size=7)
+UMAP_soggy_ctsz <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = ctsz > 0)) + ggtitle("C24 - soggy - ctsz +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$ctsz > 0)), size=7)
+(UMAP_soggy_mfap4 | UMAP_soggy_apoc1 | UMAP_soggy_ctsl.1 |  UMAP_soggy_havcr1 | UMAP_soggy_ctsz ) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+ggsave("H24_soggy_macrophage_umaps_beforesoupx.png", width = 12, height = 4, dpi = 300)
+
+#hemaglobulin
+UMAP_soggy_hbae3 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbae3 > 0))  + 
+  ggtitle("C24 - soggy - hbae3 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$hbae3 > 0)), size=7)
+UMAP_soggy_hbbe1.3 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbbe1.3 > 0))  + 
+  ggtitle("C24 - soggy - hbbe1.3 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$hbbe1.3 > 0)), size=7)
+UMAP_soggy_hbbe1.1 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbbe1.1 > 0))  +
+  ggtitle("C24 - soggy - hbbe1.1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$hbbe1.1 > 0)), size=7)
+(UMAP_soggy_hbae3 | UMAP_soggy_hbbe1.3 | UMAP_soggy_hbbe1.1) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+ggsave("C24_soggy_hemaglobulin_umaps_beforesoupx.png", width = 12, height = 4, dpi = 300)
+
+
+##profile and visually inspected soup genes in UMAP 
+#to see which cell cluster express the cell-specific marker
+#they should cluster in specific place instead evenly or widespread. 
+
+#neutrophil
+UMAP_chunks_lyz <- plotMarkerMap(sc, "lyz") + ggtitle("H24 - Expression Above Soup - lyz")
+UMAP_chunks_mpx <-plotMarkerMap(sc, "mpx") + ggtitle("H24 - Expression Above Soup - mpx")
+UMAP_chunks_npsn <-plotMarkerMap(sc, "npsn") + ggtitle("H24 - Expression Above Soup - npsn")
+
+
+
+#kertinocytes
+UMAP_chunks_krt4 <-plotMarkerMap(sc, "krt4") + ggtitle("H24 - Expression Above Soup - krt4")
+UMAP_chunks_krt5 <-plotMarkerMap(sc, "krt5") + ggtitle("H24 - Expression Above Soup - krt5")
+UMAP_chunks_krtt1c19e <-plotMarkerMap(sc, "krtt1c19e") + ggtitle("H24 - Expression Above Soup - krtt1c19e")
+
+#macrophages
+UMAP_chunks_mfap4 <-plotMarkerMap(sc, "mfap4") + ggtitle("H24 - Expression Above Soup - mfap4")
+UMAP_chunks_havcr1 <-plotMarkerMap(sc, "havcr1") + ggtitle("H24 - Expression Above Soup - havcr1")
+UMAP_chunks_apoc1 <-plotMarkerMap(sc, "apoc1") + ggtitle("H24 - Expression Above Soup - apoc1")
+UMAP_chunks_ctsl.1 <-plotMarkerMap(sc, "ctsl.1") + ggtitle("H24 - Expression Above Soup - ctsl.1")
+UMAP_chunks_ctsz <-plotMarkerMap(sc, "ctsz") + ggtitle("H24 - Expression Above Soup - ctsz")
+
+#haemoglobin
+UMAP_chunks_hbae3 <-plotMarkerMap(sc, "hbae3") + ggtitle("H24 - Expression Above Soup - hbae3")
+UMAP_chunks_hbbe1.3 <-plotMarkerMap(sc, "hbbe1.3") + ggtitle("H24 - Expression Above Soup - hbbe1.3")
+UMAP_chunks_hbbe1.1 <-plotMarkerMap(sc, "hbbe1.1") + ggtitle("H24 - Expression Above Soup - hbbe1.1")
+
+marker_list <- list(
+  Neutrophil = c("lyz", "mpx", "npsn"),
+  Macrophage = c("mfap4", "apoc1", "ctsl.1", "ctsz", "havcr1"),
+  BasalEpi = c("krt5", "krtt1c19e", "tp63"),
+  SuperficialEpi = c("krt4", "krt17"),
+  FibroEpi = c("col1a1b", "col1a2", "pdgfra"),
+  EpidermalSC = c("sox9b", "tp63"),
+  NeuralProgenitor = c("sox2", "nestin", "fabp7a"),
+  Neuron = c("elavl3", "snap25a", "tubb3"),
+  Ionocyte = c("foxi3a", "cftr", "atp6v1aa"),
+  Endothelial = c("kdrl", "cdh5", "egfl7"),
+  DifferentiatingEpi = c("krt18", "krt8"),
+  Cardiomyocyte = c("tnnt2a", "myh6", "vmhc"),
+  Retinal = c("crx", "vsx2", "rho"),
+  Erythrocyte = c("hbaa1", "hbbe1", "hbae1.3"),
+  Chondrocyte = c("col2a1a", "acana", "sox9a")
+)
+
+###average expression 
+genes_in_data <- rownames(sc$toc)
+filtered_marker_list <- lapply(marker_list, function(glist) {
+  intersect(glist, genes_in_data)
+})
+filtered_marker_list <- Filter(function(x) length(x) > 0, filtered_marker_list)
+plotMarkerDistribution(sc, nonExpressedGeneList = filtered_marker_list)
+
+###each gene expression
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+##seemslike 1-5%
+##auto-0.01(1%)
+sc <- autoEstCont(sc)
+sc$fit
+cleaned_counts <- adjustCounts(sc)
+
+##manually
+sc_manual <- setContaminationFraction(sc, 0.06)
+counts_manual <- adjustCounts(sc_manual)
+
+##which gene is affected by the contamination(auto version)
+cntSoggy <- rowSums(sc$toc > 0) 
+cntStrained <- rowSums(cleaned_counts > 0) 
+mostZeroed <- sort((cntSoggy - cntStrained)/cntSoggy, decreasing = TRUE)
+setwd("D:/project2_cGAS-STING/scRNA_seq/H24a_zf/soupx")
+write.csv(mostZeroed, "QC_post_SoupX_MostZeroed.csv", row.names = TRUE)
+
+genesCleaned <- as.data.frame(table(rowSums(sc$toc > cleaned_counts)/rowSums(sc$toc > 0)))
+rownames(genesCleaned) <- c("Untouched", "Cleaned")
+write.csv(genesCleaned, "QC_post_SoupX_GenesCleaned.csv", row.names = TRUE)
+
+df <- dd  # dd 是你从 sc$metaData 得到的 UMAP + cluster 数据
+for (gene in HSGs) {
+  if (gene %in% rownames(cleaned_counts)) {
+    df[[paste0(gene, "_no_soup")]] <- cleaned_counts[gene, ]
+  } else {
+    message(paste("Gene not found in counts_no_soup:", gene))
+  }
+}
+
+#neutrophil
+UMAP_strained_lyz <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = lyz_no_soup > 0)) + 
+  ggtitle("H24 - strained - lyz +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$lyz_no_soup > 0)), size=7)
+UMAP_strained_mpx <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = mpx_no_soup > 0)) + 
+  ggtitle("H24 - strained - mpx +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$mpx_no_soup > 0)), size=7)
+UMAP_strained_npsn <- ggplot(df, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = npsn_no_soup > 0)) + ggtitle("H24 - strained - npsn +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$npsn_no_soup > 0)), size=7)
+combined_plot <- (UMAP_strained_lyz | UMAP_strained_mpx | UMAP_strained_npsn) +
+  plot_annotation(title = "Auto version") &
+  theme(legend.position = "bottom")
+print(combined_plot)
+ggsave("H24_auto_version_neutrophil_umaps.png", combined_plot,
+       width = 12, height = 4, dpi = 300)
+
+
+#kertinocytes
+UMAP_strained_krt4 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = krt4_no_soup > 0)) + 
+  ggtitle("H24 - strained - krt4 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$krt4_no_soup > 0)), size=7)
+UMAP_strained_krt5 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = krt5_no_soup > 0)) + 
+  ggtitle("H24 - strained - krt5 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$krt5_no_soup > 0)), size=7)
+UMAP_strained_krtt1c19e <- ggplot(df, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = krtt1c19e_no_soup > 0)) + ggtitle("H24 - strained - krtt1c19e +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$krtt1c19e_no_soup > 0)), size=7)
+keratinocyte_plot <- (UMAP_strained_krt4 | UMAP_strained_krt5 | UMAP_strained_krtt1c19e) +
+  plot_annotation(title = "H24 - Auto version - Keratinocyte markers") &
+  theme(legend.position = "bottom")
+ggsave("H24_soupx_KeratinocyteMarkers_umaps.png", keratinocyte_plot,
+       width = 14, height = 4, dpi = 300)
+
+
+#macrophages
+UMAP_strained_mfap4 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = mfap4_no_soup > 0))  + 
+  ggtitle("H24 - strained - mfap4 +ve cells")  + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$mfap4_no_soup > 0)), size=7)
+UMAP_strained_havcr1 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = havcr1_no_soup > 0))  + 
+  ggtitle("H24 - strained - havcr1 +ve cells")  + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$havcr1_no_soup > 0)), size=7)
+UMAP_strained_apoc1 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = apoc1_no_soup > 0)) + 
+  ggtitle("H24 - strained - apoc1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$apoc1_no_soup > 0)), size=7)
+UMAP_strained_ctsl.1 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = ctsl.1_no_soup > 0)) + 
+  ggtitle("H24 - strained - ctsl.1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$ctsl.1_no_soup > 0)), size=7)
+UMAP_strained_ctsz <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = ctsz_no_soup > 0)) + 
+  ggtitle("H24 - strained - ctsz +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$ctsz_no_soup > 0)), size=7)
+macrophage_plot <- (UMAP_strained_mfap4 | UMAP_strained_havcr1 | UMAP_strained_apoc1 | 
+                      UMAP_strained_ctsl.1 | UMAP_strained_ctsz) +
+  plot_annotation(title = "H24 - Auto version - Macrophage markers") &
+  theme(legend.position = "bottom")
+
+ggsave("H24_soupx_MacrophageMarkers_umaps.png", macrophage_plot,
+       width = 16, height = 4, dpi = 300)
+
+
+#haemoglobin
+UMAP_strained_hbae3 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbae3_no_soup > 0))  + 
+  ggtitle("H24 - strained - hbae3 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$hbae3_no_soup > 0)), size=7)
+UMAP_strained_hbbe1.3 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbbe1.3_no_soup > 0))  + 
+  ggtitle("H24 - strained - hbbe1.3 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$hbbe1.3_no_soup > 0)), size=7)
+UMAP_strained_hbbe1.1 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbbe1.1_no_soup > 0))  + 
+  ggtitle("H24 - strained - hbbe1.1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$hbbe1.1_no_soup > 0)), size=7)
+haemoglobin_plot <- (UMAP_strained_hbae3 | UMAP_strained_hbbe1.3 | UMAP_strained_hbbe1.1) +
+  plot_annotation(title = "H24 - Auto version - Hemoglobin markers") &
+  theme(legend.position = "bottom")
+
+ggsave("H24_soupx_HemoglobinMarkers_umaps.png", haemoglobin_plot,
+       width = 12, height = 4, dpi = 300)
+
+
+###manual version
+
+df_manual <- dd  # 从 sc$metaData 拿 UMAP + cluster 信息
+
+for (gene in HSGs) {
+  if (gene %in% rownames(counts_manual)) {
+    df_manual[[paste0(gene, "_manual_no_soup")]] <- counts_manual[gene, ]
+  } else {
+    message(paste("Gene not found in counts_manual:", gene))
+  }
+}
+
+###neutrophil
+UMAP_manual_lyz <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = lyz_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("H24 - manual - lyz +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$lyz_manual_no_soup > 0)), size = 3)
+
+UMAP_manual_mpx <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = mpx_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("H24 - manual - mpx +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$mpx_manual_no_soup > 0)), size = 3)
+
+UMAP_manual_npsn <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = npsn_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("H24 - manual - npsn +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$npsn_manual_no_soup > 0)), size = 3)
+
+manual_neutrophil_plot <- (UMAP_manual_lyz | UMAP_manual_mpx | UMAP_manual_npsn) +
+  plot_annotation(title = "H24 - Manual version - Neutrophil markers") &
+  theme(legend.position = "bottom")
+
+ggsave("H24_manual_version_neutrophil_umaps.png", manual_neutrophil_plot, width = 12, height = 4, dpi = 300)
+
+
+###keratinocyte
+UMAP_manual_krt4 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = krt4_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("H24 - manual - krt4 +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$krt4_manual_no_soup > 0)), size = 3)
+
+UMAP_manual_krt5 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = krt5_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("H24 - manual - krt5 +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$krt5_manual_no_soup > 0)), size = 3)
+
+UMAP_manual_krtt1c19e <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = krtt1c19e_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("H24 - manual - krtt1c19e +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$krtt1c19e_manual_no_soup > 0)), size = 3)
+
+manual_keratinocyte_plot <- (UMAP_manual_krt4 | UMAP_manual_krt5 | UMAP_manual_krtt1c19e) +
+  plot_annotation(title = "H24 - Manual version - Keratinocyte markers") &
+  theme(legend.position = "bottom")
+
+ggsave("H24_manual_version_KeratinocyteMarkers_umaps.png", manual_keratinocyte_plot, width = 14, height = 4, dpi = 300)
+
+
+###macrophage
+UMAP_manual_mfap4 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = mfap4_manual_no_soup > 0)) +
+  ggtitle("C24 - manual - mfap4 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$mfap4_manual_no_soup > 0)), size = 7)
+
+UMAP_manual_havcr1 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = havcr1_manual_no_soup > 0)) +
+  ggtitle("C24 - manual - havcr1 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$havcr1_manual_no_soup > 0)), size = 7)
+
+UMAP_manual_apoc1 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = apoc1_manual_no_soup > 0)) +
+  ggtitle("C24 - manual - apoc1 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$apoc1_manual_no_soup > 0)), size = 7)
+
+UMAP_manual_ctsl1 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = `ctsl.1_manual_no_soup` > 0)) +
+  ggtitle("C24 - manual - ctsl.1 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$`ctsl.1_manual_no_soup` > 0)), size = 7)
+
+UMAP_manual_ctsz <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = ctsz_manual_no_soup > 0)) +
+  ggtitle("C24 - manual - ctsz +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$ctsz_manual_no_soup > 0)), size = 7)
+
+macrophage_manual_plot <- (
+  UMAP_manual_mfap4 | UMAP_manual_havcr1 | UMAP_manual_apoc1 |
+    UMAP_manual_ctsl1 | UMAP_manual_ctsz
+) + plot_annotation(title = "C24 - Manual version - Macrophage markers") &
+  theme(legend.position = "bottom")
+
+ggsave("C24_manual_MacrophageMarkers_umaps.png", macrophage_manual_plot, width = 16, height = 4, dpi = 300)
+
+
+
+
+###hemoglobin
+UMAP_manual_hbae3 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = hbae3_manual_no_soup > 0)) +
+  ggtitle("C24 - manual - hbae3 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$hbae3_manual_no_soup > 0)), size = 7)
+
+UMAP_manual_hbbe1_3 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = `hbbe1.3_manual_no_soup` > 0)) +
+  ggtitle("C24 - manual - hbbe1.3 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$`hbbe1.3_manual_no_soup` > 0)), size = 7)
+
+UMAP_manual_hbbe1_1 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = `hbbe1.1_manual_no_soup` > 0)) +
+  ggtitle("C24 - manual - hbbe1.1 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$`hbbe1.1_manual_no_soup` > 0)), size = 7)
+
+hemoglobin_manual_plot <- (
+  UMAP_manual_hbae3 | UMAP_manual_hbbe1_3 | UMAP_manual_hbbe1_1
+) + plot_annotation(title = "C24 - Manual version - Hemoglobin markers") &
+  theme(legend.position = "bottom")
+
+ggsave("C24_manual_HemoglobinMarkers_umaps.png", hemoglobin_manual_plot, width = 12, height = 4, dpi = 300)
+
+seurat_soupx_C24a <- CreateSeuratObject(counts = counts_manual, project="SoupCleaned_C24a")
+
+#save the postSoupX data
+saveRDS(seurat_soupx_C24a, file = "C24a_postSoupX_20250417.rds")
+
+
+
+
+Sys.setenv(Language="en")
+library(ggplot2)
+library(R.utils)
+library(scDblFinder)
+library(Seurat)
+library(tidyverse)
+library(dplyr)
+library(patchwork)
+library(Matrix)
+library(SoupX)
+library(harmony)
+library(SeuratDisk)
+library(DoubletFinder)
+library(scds)
+library(grid)
+rm(list=ls())
+
+setwd("D:/project2_cGAS-STING/scRNA_seq/C24b_zf/soupx/soupx marker gene visualization")
+cr_path <- "D:/project2_cGAS-STING/scRNA_seq/C24b_zf"
+rawDir <- file.path(cr_path, "raw_feature_bc_matrix")
+filtDir <- file.path(cr_path, "filtered_feature_bc_matrix") 
+tod <- Read10X(data.dir = rawDir)
+toc <- Read10X(data.dir = filtDir)
+sc = SoupChannel(tod, toc, calcSoupProfile = F)
+sc <- estimateSoup(sc, soupRange = c(1, 100))
+###according to the umi graph from the 10x Genomics 
+###load the 10x cluster
+clusters <- read.csv(("D:/project2_cGAS-STING/scRNA_seq/C24b_zf/analysis/clustering/gene_expression_graphclust/clusters.csv"), row.names=1)
+cluster_map <- setNames(clusters$Cluster, rownames(clusters))
+sc <- setClusters(sc, clusters = cluster_map)
+
+
+###load UMAP from 10x cluster
+umap <- read.csv(("D:/project2_cGAS-STING/scRNA_seq/C24b_zf/analysis/umap/gene_expression_2_components/projection.csv"), row.names=1)
+sc <- setDR(sc, umap)
+
+#view top ambient genes
+#often mitochondrial genes, ribosomal proteins, globins, actins, or highly expressed genes leaked from lysed cells.
+head(sc$soupProfile[order(sc$soupProfile$counts, decreasing = TRUE), ], 300)
+
+#top ambient gene with known cell type specificity (top 300 list)
+#with a known expected distribution, ideal genes to map the false positive from the soup. 
+HSGs <- c("lyz", "npsn", "mpx", #neutrophils
+          "krt4", "krt5", "krtt1c19e", #kerationcytes
+          "mfap4", "apoc1", "ctsl.1", "ctsz", "havcr1", #macrophage
+          "hbbe1.3","hbae3","hbbe1.1", #hemoglobulin
+          "epcam", #epithelial
+          "ctsd", "spi1b", "srgn", "lcp1") #broad macrophage/neutrophil lineage
+#plot cluster in UMAP
+dd = sc$metaData
+dd$clusters = as.character(dd$clusters)
+
+
+for (gene in HSGs) {
+  if (gene %in% rownames(sc$toc)) {
+    counts <- sc$toc[gene, ]
+    dd[[gene]] <- counts  # assign as new column
+  } else {
+    message(paste("Gene not found in toc:", gene))
+  }
+}
+
+
+##visualize cell specific marker gene before SoupX cleaning
+#visualize neutrophil
+UMAP_soggy_lyz <- ggplot(dd, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = lyz > 0)) + ggtitle("C24 - soggy - lyz +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$lyz > 0)), size=7)
+UMAP_soggy_mpx <- ggplot(dd, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = mpx > 0)) + ggtitle("C24 - soggy - mpx +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$mpx > 0)), size=7)
+UMAP_soggy_npsn <- ggplot(dd, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = npsn > 0)) + ggtitle("C24 - soggy - npsn +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$npsn > 0)), size=7)
+(UMAP_soggy_lyz | UMAP_soggy_mpx | UMAP_soggy_npsn) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+ggsave("C24_soggy_neutrophil_umaps_beforesoupx.png", width = 12, height = 4, dpi = 300)
+
+
+#visualize keratinocytes
+UMAP_soggy_krt4 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = krt4 > 0)) + 
+  ggtitle("C24 - soggy - krt4 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$krt4 > 0)), size=7)
+UMAP_soggy_krt5 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = krt5 > 0)) + 
+  ggtitle("C24 - soggy - krt5 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$krt5 > 0)), size=7)
+UMAP_soggy_krtt1c19e <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = krtt1c19e > 0)) + 
+  ggtitle("C24 - soggy - krtt1c19e +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$krtt1c19e > 0)), size=7)
+(UMAP_soggy_krt4 | UMAP_soggy_krt5 | UMAP_soggy_krtt1c19e) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+ggsave("C24_soggy_keratinocytes_umaps_beforesoupx.png", width = 12, height = 4, dpi = 300)
+
+#visualize macrophage
+UMAP_soggy_mfap4 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = mfap4 > 0)) + ggtitle("C24 - soggy - mfap4 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$mfap4 > 0)), size=7)
+UMAP_soggy_apoc1 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = apoc1 > 0)) + ggtitle("C24 - soggy - apoc1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$apoc1 > 0)), size=7)
+UMAP_soggy_ctsl.1 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = ctsl.1 > 0)) + ggtitle("C24 - soggy - ctsl.1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$ctsl.1 > 0)), size=7)
+UMAP_soggy_havcr1 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = havcr1 > 0))  + ggtitle("C24 - soggy - havcr1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$havcr1 > 0)), size=7)
+UMAP_soggy_ctsz <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = ctsz > 0)) + ggtitle("C24 - soggy - ctsz +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$ctsz > 0)), size=7)
+(UMAP_soggy_mfap4 | UMAP_soggy_apoc1 | UMAP_soggy_ctsl.1 |  UMAP_soggy_havcr1 | UMAP_soggy_ctsz ) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+ggsave("C24_soggy_macrophage_umaps_beforesoupx.png", width = 12, height = 4, dpi = 300)
+
+#hemaglobulin
+UMAP_soggy_hbae3 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbae3 > 0))  + 
+  ggtitle("C24 - soggy - hbae3 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$hbae3 > 0)), size=7)
+UMAP_soggy_hbbe1.3 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbbe1.3 > 0))  + 
+  ggtitle("C24 - soggy - hbbe1.3 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$hbbe1.3 > 0)), size=7)
+UMAP_soggy_hbbe1.1 <- ggplot(dd, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbbe1.1 > 0))  +
+  ggtitle("C24 - soggy - hbbe1.1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(dd$hbbe1.1 > 0)), size=7)
+(UMAP_soggy_hbae3 | UMAP_soggy_hbbe1.3 | UMAP_soggy_hbbe1.1) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+ggsave("C24_soggy_hemaglobulin_umaps_beforesoupx.png", width = 12, height = 4, dpi = 300)
+
+
+##profile and visually inspected soup genes in UMAP 
+#to see which cell cluster express the cell-specific marker
+#they should cluster in specific place instead evenly or widespread. 
+
+#neutrophil
+UMAP_chunks_lyz <- plotMarkerMap(sc, "lyz") + ggtitle("H24 - Expression Above Soup - lyz")
+UMAP_chunks_mpx <-plotMarkerMap(sc, "mpx") + ggtitle("H24 - Expression Above Soup - mpx")
+UMAP_chunks_npsn <-plotMarkerMap(sc, "npsn") + ggtitle("H24 - Expression Above Soup - npsn")
+
+
+
+#kertinocytes
+UMAP_chunks_krt4 <-plotMarkerMap(sc, "krt4") + ggtitle("H24 - Expression Above Soup - krt4")
+UMAP_chunks_krt5 <-plotMarkerMap(sc, "krt5") + ggtitle("H24 - Expression Above Soup - krt5")
+UMAP_chunks_krtt1c19e <-plotMarkerMap(sc, "krtt1c19e") + ggtitle("H24 - Expression Above Soup - krtt1c19e")
+
+#macrophages
+UMAP_chunks_mfap4 <-plotMarkerMap(sc, "mfap4") + ggtitle("H24 - Expression Above Soup - mfap4")
+UMAP_chunks_havcr1 <-plotMarkerMap(sc, "havcr1") + ggtitle("H24 - Expression Above Soup - havcr1")
+UMAP_chunks_apoc1 <-plotMarkerMap(sc, "apoc1") + ggtitle("H24 - Expression Above Soup - apoc1")
+UMAP_chunks_ctsl.1 <-plotMarkerMap(sc, "ctsl.1") + ggtitle("H24 - Expression Above Soup - ctsl.1")
+UMAP_chunks_ctsz <-plotMarkerMap(sc, "ctsz") + ggtitle("H24 - Expression Above Soup - ctsz")
+
+#haemoglobin
+UMAP_chunks_hbae3 <-plotMarkerMap(sc, "hbae3") + ggtitle("H24 - Expression Above Soup - hbae3")
+UMAP_chunks_hbbe1.3 <-plotMarkerMap(sc, "hbbe1.3") + ggtitle("H24 - Expression Above Soup - hbbe1.3")
+UMAP_chunks_hbbe1.1 <-plotMarkerMap(sc, "hbbe1.1") + ggtitle("H24 - Expression Above Soup - hbbe1.1")
+
+marker_list <- list(
+  Neutrophil = c("lyz", "mpx", "npsn"),
+  Macrophage = c("mfap4", "apoc1", "ctsl.1", "ctsz", "havcr1"),
+  BasalEpi = c("krt5", "krtt1c19e", "tp63"),
+  SuperficialEpi = c("krt4", "krt17"),
+  FibroEpi = c("col1a1b", "col1a2", "pdgfra"),
+  EpidermalSC = c("sox9b", "tp63"),
+  PNC = c("lamc2", "itga6b", "mmp9", "il1b"),
+  NeuralProgenitor = c("sox2", "nestin", "fabp7a"),
+  Neuron = c("elavl3", "snap25a", "tubb3"),
+  Ionocyte = c("foxi3a", "cftr", "atp6v1aa"),
+  Endothelial = c("kdrl", "cdh5", "egfl7"),
+  DifferentiatingEpi = c("krt18", "krt8"),
+  Cardiomyocyte = c("tnnt2a", "myh6", "vmhc"),
+  Retinal = c("crx", "vsx2", "rho"),
+  Erythrocyte = c("hbaa1", "hbbe1", "hbae1.3"),
+  Chondrocyte = c("col2a1a", "acana", "sox9a")
+)
+
+###average expression 
+genes_in_data <- rownames(sc$toc)
+filtered_marker_list <- lapply(marker_list, function(glist) {
+  intersect(glist, genes_in_data)
+})
+filtered_marker_list <- Filter(function(x) length(x) > 0, filtered_marker_list)
+plotMarkerDistribution(sc, nonExpressedGeneList = filtered_marker_list)
+
+###each gene expression
+flat_marker_list <- list()
+for (celltype in names(marker_list)) {
+  for (gene in marker_list[[celltype]]) {
+    flat_marker_list[[paste(celltype, gene, sep = "_")]] <- gene
+  }
+}
+genes_in_data <- rownames(sc$toc)
+flat_marker_list <- list()
+for (celltype in names(marker_list)) {
+  for (gene in marker_list[[celltype]]) {
+    if (gene %in% genes_in_data) {
+      # 同时要求该 gene 在 toc 中至少有一行非零
+      if (sum(sc$toc[gene, ] > 0) > 10) {
+        flat_marker_list[[paste(celltype, gene, sep = "_")]] <- gene
+      }
+    }
+  }
+}
+plotMarkerDistribution(sc, nonExpressedGeneList = flat_marker_list) +
+  ggplot2::theme(axis.text.x = element_text(angle = 45, hjust = 1))
+##seemslike 1-5%
+##auto-0.01(1%)
+sc <- autoEstCont(sc)
+sc$fit
+cleaned_counts <- adjustCounts(sc)
+
+##manually
+sc_manual <- setContaminationFraction(sc, 0.06)
+counts_manual <- adjustCounts(sc_manual)
+
+##which gene is affected by the contamination(auto version)
+cntSoggy <- rowSums(sc$toc > 0) 
+cntStrained <- rowSums(cleaned_counts > 0) 
+mostZeroed <- sort((cntSoggy - cntStrained)/cntSoggy, decreasing = TRUE)
+setwd("D:/project2_cGAS-STING/scRNA_seq/H24a_zf/soupx")
+write.csv(mostZeroed, "QC_post_SoupX_MostZeroed.csv", row.names = TRUE)
+
+genesCleaned <- as.data.frame(table(rowSums(sc$toc > cleaned_counts)/rowSums(sc$toc > 0)))
+rownames(genesCleaned) <- c("Untouched", "Cleaned")
+write.csv(genesCleaned, "QC_post_SoupX_GenesCleaned.csv", row.names = TRUE)
+
+df <- dd  # dd 是你从 sc$metaData 得到的 UMAP + cluster 数据
+for (gene in HSGs) {
+  if (gene %in% rownames(cleaned_counts)) {
+    df[[paste0(gene, "_no_soup")]] <- cleaned_counts[gene, ]
+  } else {
+    message(paste("Gene not found in counts_no_soup:", gene))
+  }
+}
+
+#neutrophil
+UMAP_strained_lyz <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = lyz_no_soup > 0)) + 
+  ggtitle("C24 - strained - lyz +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$lyz_no_soup > 0)), size=7)
+UMAP_strained_mpx <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = mpx_no_soup > 0)) + 
+  ggtitle("C24 - strained - mpx +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$mpx_no_soup > 0)), size=7)
+UMAP_strained_npsn <- ggplot(df, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = npsn_no_soup > 0)) + ggtitle("C24 - strained - npsn +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$npsn_no_soup > 0)), size=7)
+combined_plot <- (UMAP_strained_lyz | UMAP_strained_mpx | UMAP_strained_npsn) +
+  plot_annotation(title = "Auto version") &
+  theme(legend.position = "bottom")
+print(combined_plot)
+ggsave("C24_auto_version_neutrophil_umaps.png", combined_plot,
+       width = 12, height = 4, dpi = 300)
+
+
+#kertinocytes
+UMAP_strained_krt4 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = krt4_no_soup > 0)) + 
+  ggtitle("C24 - strained - krt4 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$krt4_no_soup > 0)), size=7)
+UMAP_strained_krt5 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = krt5_no_soup > 0)) + 
+  ggtitle("C24 - strained - krt5 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$krt5_no_soup > 0)), size=7)
+UMAP_strained_krtt1c19e <- ggplot(df, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = krtt1c19e_no_soup > 0)) + ggtitle("C24 - strained - krtt1c19e +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$krtt1c19e_no_soup > 0)), size=7)
+keratinocyte_plot <- (UMAP_strained_krt4 | UMAP_strained_krt5 | UMAP_strained_krtt1c19e) +
+  plot_annotation(title = "C24 - Auto version - Keratinocyte markers") &
+  theme(legend.position = "bottom")
+ggsave("C24_soupx_KeratinocyteMarkers_umaps.png", keratinocyte_plot,
+       width = 14, height = 4, dpi = 300)
+
+
+#macrophages
+UMAP_strained_mfap4 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = mfap4_no_soup > 0))  + 
+  ggtitle("C24 - strained - mfap4 +ve cells")  + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$mfap4_no_soup > 0)), size=7)
+UMAP_strained_havcr1 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = havcr1_no_soup > 0))  + 
+  ggtitle("C24 - strained - havcr1 +ve cells")  + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$havcr1_no_soup > 0)), size=7)
+UMAP_strained_apoc1 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = apoc1_no_soup > 0)) + 
+  ggtitle("C24 - strained - apoc1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$apoc1_no_soup > 0)), size=7)
+UMAP_strained_ctsl.1 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = ctsl.1_no_soup > 0)) + 
+  ggtitle("C24 - strained - ctsl.1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$ctsl.1_no_soup > 0)), size=7)
+UMAP_strained_ctsz <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = ctsz_no_soup > 0)) + 
+  ggtitle("C24 - strained - ctsz +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$ctsz_no_soup > 0)), size=7)
+macrophage_plot <- (UMAP_strained_mfap4 | UMAP_strained_havcr1 | UMAP_strained_apoc1 | 
+                      UMAP_strained_ctsl.1 | UMAP_strained_ctsz) +
+  plot_annotation(title = "C24 - Auto version - Macrophage markers") &
+  theme(legend.position = "bottom")
+
+ggsave("C24_soupx_MacrophageMarkers_umaps.png", macrophage_plot,
+       width = 16, height = 4, dpi = 300)
+
+
+#haemoglobin
+UMAP_strained_hbae3 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbae3_no_soup > 0))  + 
+  ggtitle("C24 - strained - hbae3 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$hbae3_no_soup > 0)), size=7)
+UMAP_strained_hbbe1.3 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbbe1.3_no_soup > 0))  + 
+  ggtitle("C24 - strained - hbbe1.3 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$hbbe1.3_no_soup > 0)), size=7)
+UMAP_strained_hbbe1.1 <- ggplot(df, aes(UMAP.1, UMAP.2)) + geom_point(aes(colour = hbbe1.1_no_soup > 0))  + 
+  ggtitle("C24 - strained - hbbe1.1 +ve cells") + 
+  annotate("text", x=7.5, y=12.5, label=paste(sum(df$hbbe1.1_no_soup > 0)), size=7)
+haemoglobin_plot <- (UMAP_strained_hbae3 | UMAP_strained_hbbe1.3 | UMAP_strained_hbbe1.1) +
+  plot_annotation(title = "C24 - Auto version - Hemoglobin markers") &
+  theme(legend.position = "bottom")
+
+ggsave("C24_soupx_HemoglobinMarkers_umaps.png", haemoglobin_plot,
+       width = 12, height = 4, dpi = 300)
+
+
+###manual version
+
+df_manual <- dd  # 从 sc$metaData 拿 UMAP + cluster 信息
+
+for (gene in HSGs) {
+  if (gene %in% rownames(counts_manual)) {
+    df_manual[[paste0(gene, "_manual_no_soup")]] <- counts_manual[gene, ]
+  } else {
+    message(paste("Gene not found in counts_manual:", gene))
+  }
+}
+
+###neutrophil
+UMAP_manual_lyz <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = lyz_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("C24 - manual - lyz +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$lyz_manual_no_soup > 0)), size = 3)
+
+UMAP_manual_mpx <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = mpx_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("C24 - manual - mpx +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$mpx_manual_no_soup > 0)), size = 3)
+
+UMAP_manual_npsn <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = npsn_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("C24 - manual - npsn +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$npsn_manual_no_soup > 0)), size = 3)
+
+manual_neutrophil_plot <- (UMAP_manual_lyz | UMAP_manual_mpx | UMAP_manual_npsn) +
+  plot_annotation(title = "C24 - Manual version - Neutrophil markers") &
+  theme(legend.position = "bottom")
+
+ggsave("C24_manual_version_neutrophil_umaps.png", manual_neutrophil_plot, width = 12, height = 4, dpi = 300)
+
+
+###keratinocyte
+UMAP_manual_krt4 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = krt4_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("C24 - manual - krt4 +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$krt4_manual_no_soup > 0)), size = 3)
+
+UMAP_manual_krt5 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = krt5_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("C24 - manual - krt5 +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$krt5_manual_no_soup > 0)), size = 3)
+
+UMAP_manual_krtt1c19e <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) + 
+  geom_point(aes(colour = krtt1c19e_manual_no_soup > 0), size = 0.3) + 
+  ggtitle("C24 - manual - krtt1c19e +ve cells") + 
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$krtt1c19e_manual_no_soup > 0)), size = 3)
+
+manual_keratinocyte_plot <- (UMAP_manual_krt4 | UMAP_manual_krt5 | UMAP_manual_krtt1c19e) +
+  plot_annotation(title = "C24 - Manual version - Keratinocyte markers") &
+  theme(legend.position = "bottom")
+
+ggsave("C24_manual_version_KeratinocyteMarkers_umaps.png", manual_keratinocyte_plot, width = 14, height = 4, dpi = 300)
+
+
+###macrophage
+UMAP_manual_mfap4 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = mfap4_manual_no_soup > 0)) +
+  ggtitle("C24 - manual - mfap4 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$mfap4_manual_no_soup > 0)), size = 7)
+
+UMAP_manual_havcr1 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = havcr1_manual_no_soup > 0)) +
+  ggtitle("C24 - manual - havcr1 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$havcr1_manual_no_soup > 0)), size = 7)
+
+UMAP_manual_apoc1 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = apoc1_manual_no_soup > 0)) +
+  ggtitle("C24 - manual - apoc1 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$apoc1_manual_no_soup > 0)), size = 7)
+
+UMAP_manual_ctsl1 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = `ctsl.1_manual_no_soup` > 0)) +
+  ggtitle("C24 - manual - ctsl.1 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$`ctsl.1_manual_no_soup` > 0)), size = 7)
+
+UMAP_manual_ctsz <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = ctsz_manual_no_soup > 0)) +
+  ggtitle("C24 - manual - ctsz +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$ctsz_manual_no_soup > 0)), size = 7)
+
+macrophage_manual_plot <- (
+  UMAP_manual_mfap4 | UMAP_manual_havcr1 | UMAP_manual_apoc1 |
+    UMAP_manual_ctsl1 | UMAP_manual_ctsz
+) + plot_annotation(title = "C24 - Manual version - Macrophage markers") &
+  theme(legend.position = "bottom")
+
+ggsave("C24_manual_MacrophageMarkers_umaps.png", macrophage_manual_plot, width = 16, height = 4, dpi = 300)
+
+
+
+
+###hemoglobin
+UMAP_manual_hbae3 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = hbae3_manual_no_soup > 0)) +
+  ggtitle("C24 - manual - hbae3 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$hbae3_manual_no_soup > 0)), size = 7)
+
+UMAP_manual_hbbe1_3 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = `hbbe1.3_manual_no_soup` > 0)) +
+  ggtitle("C24 - manual - hbbe1.3 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$`hbbe1.3_manual_no_soup` > 0)), size = 7)
+
+UMAP_manual_hbbe1_1 <- ggplot(df_manual, aes(UMAP.1, UMAP.2)) +
+  geom_point(aes(colour = `hbbe1.1_manual_no_soup` > 0)) +
+  ggtitle("C24 - manual - hbbe1.1 +ve cells") +
+  annotate("text", x = 7.5, y = 12.5, label = paste(sum(df_manual$`hbbe1.1_manual_no_soup` > 0)), size = 7)
+
+hemoglobin_manual_plot <- (
+  UMAP_manual_hbae3 | UMAP_manual_hbbe1_3 | UMAP_manual_hbbe1_1
+) + plot_annotation(title = "C24 - Manual version - Hemoglobin markers") &
+  theme(legend.position = "bottom")
+
+ggsave("C24_manual_HemoglobinMarkers_umaps.png", hemoglobin_manual_plot, width = 12, height = 4, dpi = 300)
+
+seurat_soupx_C24b <- CreateSeuratObject(counts = counts_manual, project="SoupCleaned_C24b")
+
+#save the postSoupX data
+saveRDS(seurat_soupx_C24b, file = "C24b_postSoupX_20250417.rds")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
