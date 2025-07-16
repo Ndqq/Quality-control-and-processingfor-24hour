@@ -311,7 +311,7 @@ ggsave("H24_soupx_HemoglobinMarkers_umaps.png", haemoglobin_plot,
 
 ###manual version
 
-df_manual <- dd  # 从 sc$metaData 拿 UMAP + cluster 信息
+df_manual <- dd  
 
 for (gene in HSGs) {
   if (gene %in% rownames(counts_manual)) {
