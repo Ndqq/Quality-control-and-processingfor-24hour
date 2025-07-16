@@ -60,14 +60,14 @@ sce_caax <- slingshot(
   sce_caax,
   clusterLabels = 'cluster',
   reducedDim = 'UMAP',
-  start.clus = 'CAAX1'  # 根据需要指定起点
+  start.clus = 'CAAX1'  
 )
 
 sce_hras <- slingshot(
   sce_hras,
   clusterLabels = 'cluster',
   reducedDim = 'UMAP',
-  start.clus = 'PNC1'  # 根据需要指定起点
+  start.clus = 'PNC1'  
 )
 
 umap_caax <- as.data.frame(reducedDim(sce_caax, "UMAP"))
