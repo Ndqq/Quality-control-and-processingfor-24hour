@@ -192,7 +192,7 @@ flat_marker_list <- list()
 for (celltype in names(marker_list)) {
   for (gene in marker_list[[celltype]]) {
     if (gene %in% genes_in_data) {
-      # 同时要求该 gene 在 toc 中至少有一行非零
+     
       if (sum(sc$toc[gene, ] > 0) > 10) {
         flat_marker_list[[paste(celltype, gene, sep = "_")]] <- gene
       }
@@ -222,7 +222,7 @@ genesCleaned <- as.data.frame(table(rowSums(sc$toc > cleaned_counts)/rowSums(sc$
 rownames(genesCleaned) <- c("Untouched", "Cleaned")
 write.csv(genesCleaned, "QC_post_SoupX_GenesCleaned.csv", row.names = TRUE)
 
-df <- dd  # dd 是你从 sc$metaData 得到的 UMAP + cluster 数据
+df <- dd  
 for (gene in HSGs) {
   if (gene %in% rownames(cleaned_counts)) {
     df[[paste0(gene, "_no_soup")]] <- cleaned_counts[gene, ]
